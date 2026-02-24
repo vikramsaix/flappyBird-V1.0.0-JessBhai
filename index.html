@@ -142,9 +142,11 @@
       border: 1px solid var(--line);
       border-radius: var(--panel-radius);
       padding: 14px;
-      background: linear-gradient(180deg, rgba(11, 14, 25, 0.68), rgba(9, 10, 18, 0.86));
+      background:
+        linear-gradient(180deg, rgba(255,255,255,0.08), rgba(255,255,255,0.02)),
+        linear-gradient(180deg, rgba(11, 14, 25, 0.55), rgba(9, 10, 18, 0.76));
       box-shadow: var(--shadow);
-      backdrop-filter: blur(10px);
+      backdrop-filter: blur(14px) saturate(140%);
       display: grid;
       gap: 12px;
     }
@@ -159,7 +161,10 @@
       border: 1px solid rgba(255,255,255,.11);
       border-radius: 14px;
       padding: 10px 12px;
-      background: rgba(255,255,255,.03);
+      background:
+        linear-gradient(180deg, rgba(255,255,255,.08), rgba(255,255,255,.02)),
+        rgba(255,255,255,.03);
+      backdrop-filter: blur(10px) saturate(130%);
       min-height: 68px;
       display: grid;
       align-content: center;
@@ -212,7 +217,14 @@
     }
 
     .btnSecondary {
-      background: rgba(255,255,255,.06);
+      background:
+        linear-gradient(180deg, rgba(255,255,255,.18), rgba(255,255,255,.05)),
+        rgba(255,255,255,.06);
+      border-color: rgba(255,255,255,.24);
+      backdrop-filter: blur(14px) saturate(150%);
+      box-shadow:
+        inset 0 1px 0 rgba(255,255,255,.22),
+        0 10px 24px rgba(0,0,0,.24);
       font-weight: 700;
       min-width: 126px;
     }
@@ -289,9 +301,11 @@
 
     .chip {
       pointer-events: auto;
-      border: 1px solid rgba(255,255,255,.16);
-      background: rgba(8, 11, 20, .55);
-      backdrop-filter: blur(8px);
+      border: 1px solid rgba(255,255,255,.22);
+      background:
+        linear-gradient(180deg, rgba(255,255,255,.16), rgba(255,255,255,.05)),
+        rgba(8, 11, 20, .42);
+      backdrop-filter: blur(14px) saturate(150%);
       border-radius: 999px;
       padding: 7px 10px;
       line-height: 1;
@@ -315,14 +329,19 @@
     }
 
     .miniBtn {
-      border: 1px solid rgba(255,255,255,.15);
-      background: rgba(8, 11, 20, .58);
+      border: 1px solid rgba(255,255,255,.22);
+      background:
+        linear-gradient(180deg, rgba(255,255,255,.18), rgba(255,255,255,.05)),
+        rgba(8, 11, 20, .42);
       color: var(--ink);
       border-radius: 999px;
       padding: 8px 12px;
       font-weight: 700;
       cursor: pointer;
-      backdrop-filter: blur(8px);
+      backdrop-filter: blur(14px) saturate(150%);
+      box-shadow:
+        inset 0 1px 0 rgba(255,255,255,.20),
+        0 8px 20px rgba(0,0,0,.22);
     }
 
     .miniBtn:hover { filter: brightness(1.06); }
@@ -672,10 +691,6 @@
               <button id="homeMuteBtn" class="btn btnSecondary" type="button">Sound: On</button>
             </div>
 
-            <p class="homeHint">
-              Portrait-first home screen. Tap <b>Sound</b> if the video starts muted (browser autoplay rule). Tap/click or press <b>Space</b> to jump in-game.
-            </p>
-            <div id="assetStatus" class="assetStatus" aria-live="polite"></div>
           </div>
         </div>
       </div>
@@ -1698,17 +1713,17 @@
       setTapPrompt(true);
       goHome();
 
-      el.assetStatus.textContent = 'Loading player sprites and obstacle asset...';
+      if (el.assetStatus) el.assetStatus.textContent = 'Loading player sprites and obstacle asset...';
       preloadImages()
         .then(() => {
           app.assetsReady = true;
           el.playBtn.disabled = false;
           el.playBtn.textContent = 'Play';
-          el.assetStatus.textContent = 'Assets ready. 4 levels active (0-5, 6-10, 11-15, 16-20).';
+          if (el.assetStatus) el.assetStatus.textContent = 'Assets ready. 4 levels active (0-5, 6-10, 11-15, 16-20).';
         })
         .catch((err) => {
           console.error(err);
-          el.assetStatus.textContent = 'Asset loading failed. Check the assets/ folder paths.';
+          if (el.assetStatus) el.assetStatus.textContent = 'Asset loading failed. Check the assets/ folder paths.';
           el.playBtn.disabled = true;
           el.playBtn.textContent = 'Assets Missing';
         });
