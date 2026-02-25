@@ -60,8 +60,10 @@
       hudMode: document.getElementById('hudMode'),
       hudScore: document.getElementById('hudScore'),
       hudLevel: document.getElementById('hudLevel'),
+      hudGears: document.getElementById('hudGears'),
       hudCombo: document.getElementById('hudCombo'),
       comboChip: document.getElementById('comboChip'),
+      reviveChip: document.getElementById('reviveChip'),
       hudRevive: document.getElementById('hudRevive'),
       hudBest: document.getElementById('hudBest'),
       progressFill: document.getElementById('progressFill'),
@@ -73,6 +75,7 @@
       assetStatus: document.getElementById('assetStatus'),
       failMusic: document.getElementById('failMusic'),
       upgradeMusic: document.getElementById('upgradeMusic'),
+      homeBgmCue: document.getElementById('homeBgmCue'),
       upgradeOverlay: document.getElementById('upgradeOverlay'),
       upgradeTitle: document.getElementById('upgradeTitle'),
       upgradeSub: document.getElementById('upgradeSub'),
@@ -115,6 +118,8 @@
       badgeToastQueue: [],
       badgeToastActive: false,
       microToastTimer: null,
+      bgmCueFadeRaf: 0,
+      bgmCueHoldTimer: null,
       upgradeTimer: null
     };
 
@@ -136,6 +141,7 @@
       floorPulse: 0,
       runCoinsEarned: 0,
       rewardsCommitted: false,
+      gearsCollectedRun: 0,
       comboStreak: 0,
       comboPulse: 0,
       comboGlow: 0,
@@ -143,6 +149,7 @@
       reviveAvailable: true,
       reviveUsed: false,
       reviveShieldTime: 0,
+      bgmCueMilestonesPlayed: [],
       pendingLevelUpgrade: null,
       upgradeMilestonesPlayed: [],
       inlineUpgradeSpriteActive: false,
@@ -447,9 +454,18 @@
       el.hudScore.textContent = String(game.score);
       el.hudLevel.textContent = lvl.label;
       if (el.hudMode) el.hudMode.textContent = isEndlessMode() ? 'END' : 'CLS';
+      if (el.hudGears) el.hudGears.textContent = String(game.gearsCollectedRun || 0);
       if (el.hudCombo) el.hudCombo.textContent = `x${comboMult.toFixed(2).replace(/\.00$/, '.0')}`;
-      if (el.comboChip) el.comboChip.classList.toggle('active', game.comboStreak >= 2);
+      if (el.comboChip) {
+        const showCombo = game.comboStreak >= 2;
+        el.comboChip.classList.toggle('active', showCombo);
+        el.comboChip.classList.toggle('hidden', !showCombo);
+      }
       if (el.hudRevive) el.hudRevive.textContent = game.reviveAvailable ? '1' : '0';
+      if (el.reviveChip) {
+        const showRevive = game.score >= 15 || game.reviveUsed || !game.reviveAvailable || game.reviveShieldTime > 0;
+        el.reviveChip.classList.toggle('hidden', !showRevive);
+      }
       el.hudBest.textContent = String(game.best);
       el.progressFill.style.width = `${(progressValue / SCORE_CAP) * 100}%`;
       updateProgressBestMarker();
@@ -483,6 +499,9 @@
         el.upgradeMusic.muted = app.muted;
         el.upgradeMusic.volume = 1;
       }
+      if (el.homeBgmCue) {
+        el.homeBgmCue.muted = app.muted;
+      }
       if (app.muted) {
         el.failMusic.pause();
         el.failMusic.currentTime = 0;
@@ -490,6 +509,7 @@
           el.upgradeMusic.pause();
           el.upgradeMusic.currentTime = 0;
         }
+        stopHomeBgmCue(true);
       }
     }
 
@@ -502,6 +522,78 @@
       if (app.screen === 'home') {
         playHomeVideo(true);
       }
+    }
+
+    function stopHomeBgmCue(resetTime = false) {
+      if (!el.homeBgmCue) return;
+      if (app.bgmCueFadeRaf) {
+        cancelAnimationFrame(app.bgmCueFadeRaf);
+        app.bgmCueFadeRaf = 0;
+      }
+      if (app.bgmCueHoldTimer) {
+        clearTimeout(app.bgmCueHoldTimer);
+        app.bgmCueHoldTimer = null;
+      }
+      el.homeBgmCue.pause();
+      if (resetTime) {
+        try {
+          el.homeBgmCue.currentTime = 0;
+        } catch {}
+      }
+      el.homeBgmCue.volume = 0;
+    }
+
+    function fadeAudioElement(audioEl, from, to, durationMs, onDone) {
+      if (!audioEl) {
+        if (onDone) onDone();
+        return;
+      }
+      if (app.bgmCueFadeRaf) cancelAnimationFrame(app.bgmCueFadeRaf);
+      const start = performance.now();
+      const dur = Math.max(1, durationMs);
+      audioEl.volume = clamp(from, 0, 1);
+
+      const step = (now) => {
+        const t = clamp((now - start) / dur, 0, 1);
+        const eased = t < 0.5 ? (2 * t * t) : (1 - Math.pow(-2 * t + 2, 2) / 2);
+        audioEl.volume = clamp(lerp(from, to, eased), 0, 1);
+        if (t < 1) {
+          app.bgmCueFadeRaf = requestAnimationFrame(step);
+          return;
+        }
+        app.bgmCueFadeRaf = 0;
+        if (onDone) onDone();
+      };
+
+      app.bgmCueFadeRaf = requestAnimationFrame(step);
+    }
+
+    function playScoreBgmCue() {
+      if (app.muted || !el.homeBgmCue) return;
+      stopHomeBgmCue(true);
+      el.homeBgmCue.loop = false;
+      el.homeBgmCue.volume = 0;
+      const p = el.homeBgmCue.play();
+      if (p && typeof p.catch === 'function') p.catch(() => {});
+      fadeAudioElement(el.homeBgmCue, 0, 0.34, 900, () => {
+        if (app.bgmCueHoldTimer) clearTimeout(app.bgmCueHoldTimer);
+        app.bgmCueHoldTimer = setTimeout(() => {
+          app.bgmCueHoldTimer = null;
+          fadeAudioElement(el.homeBgmCue, el.homeBgmCue.volume || 0.34, 0, 1200, () => {
+            stopHomeBgmCue(true);
+          });
+        }, 2100);
+      });
+    }
+
+    function maybeTriggerScoreBgmCue() {
+      const segmentScore = getDisplayProgressValue(game.score, game.mode);
+      if (segmentScore !== 15 && segmentScore !== 25) return;
+      const loop = isEndlessMode(game.mode) ? Math.floor((Math.max(0, game.score) - 1) / SCORE_CAP) : 0;
+      const key = `${loop}:${segmentScore}`;
+      if (game.bgmCueMilestonesPlayed.includes(key)) return;
+      game.bgmCueMilestonesPlayed.push(key);
+      playScoreBgmCue();
     }
 
     function queueMicroReward(text) {
@@ -780,6 +872,7 @@
       game.floorPulse = 0;
       game.runCoinsEarned = 0;
       game.rewardsCommitted = false;
+      game.gearsCollectedRun = 0;
       game.comboStreak = 0;
       game.comboPulse = 0;
       game.comboGlow = 0;
@@ -787,6 +880,7 @@
       game.reviveAvailable = true;
       game.reviveUsed = false;
       game.reviveShieldTime = 0;
+      game.bgmCueMilestonesPlayed = [];
       game.pendingLevelUpgrade = null;
       game.upgradeMilestonesPlayed = [];
       game.inlineUpgradeSpriteActive = false;
@@ -805,6 +899,7 @@
       setTapPrompt(false);
       hideAllOverlays();
       stopFailMusic();
+      stopHomeBgmCue(true);
       if (el.upgradeMusic) {
         el.upgradeMusic.pause();
         el.upgradeMusic.currentTime = 0;
@@ -823,6 +918,7 @@
         app.splashTimer = null;
       }
       stopFailMusic();
+      stopHomeBgmCue(true);
       if (el.upgradeMusic) {
         el.upgradeMusic.pause();
         el.upgradeMusic.currentTime = 0;
@@ -842,6 +938,7 @@
       resumeAudioContext();
       setScreen('game');
       pauseHomeVideo();
+      stopHomeBgmCue(true);
       resetRetryStreak();
       resetRun(app.selectedMode);
       updateHud();
@@ -853,6 +950,7 @@
       resumeAudioContext();
       setScreen('game');
       pauseHomeVideo();
+      stopHomeBgmCue(true);
       resetRun(game.mode || app.selectedMode);
     }
 
@@ -871,6 +969,20 @@
       return score;
     }
 
+    function makePipeGear(gap) {
+      const r = clamp(gap * 0.065, 12, 16);
+      const maxDy = Math.max(0, gap * 0.27 - r);
+      return {
+        r,
+        dx: rand(-10, 10),
+        dy: rand(-maxDy, maxDy),
+        phase: rand(0, Math.PI * 2),
+        spin: rand(-2.4, 2.4) || 1.8,
+        collected: false,
+        bonusScored: false
+      };
+    }
+
     function spawnPipe() {
       const tuning = getLevelTuning(game.score, game.mode);
       const gap = tuning.gap;
@@ -884,7 +996,8 @@
         w: tuning.pipeWidth,
         gap,
         gapY,
-        scored: false
+        scored: false,
+        gear: makePipeGear(gap)
       });
     }
 
@@ -943,6 +1056,33 @@
         clean: minClearance >= cleanMargin,
         clearance: minClearance
       };
+    }
+
+    function getPipeGearWorldPos(pipe) {
+      if (!pipe || !pipe.gear) return null;
+      return {
+        x: pipe.x + pipe.w * 0.5 + (pipe.gear.dx || 0),
+        y: pipe.gapY + (pipe.gear.dy || 0) + Math.sin(game.worldTime * 5 + (pipe.gear.phase || 0)) * 2.4
+      };
+    }
+
+    function tryCollectPipeGear(pipe) {
+      if (!pipe || !pipe.gear || pipe.gear.collected || pipe.scored) return false;
+      const pos = getPipeGearWorldPos(pipe);
+      if (!pos) return false;
+      const dx = game.player.x - pos.x;
+      const dy = game.player.y - pos.y;
+      const hitR = game.player.radius + pipe.gear.r + 2;
+      if ((dx * dx + dy * dy) > hitR * hitR) return false;
+
+      pipe.gear.collected = true;
+      game.gearsCollectedRun += 1;
+      addRunCoins(1, 'Gear');
+      game.hitFlash = Math.max(game.hitFlash, 0.15);
+      game.floorPulse = Math.max(game.floorPulse, 0.65);
+      game.comboGlow = Math.max(game.comboGlow, 0.35);
+      updateHud();
+      return true;
     }
 
     function getFailMotivationText() {
@@ -1095,6 +1235,7 @@
       game.inlineUpgradeAwaitingTapSwap = false;
       game.hitFlash = 0.95;
       game.shake = 7;
+      stopHomeBgmCue(true);
       saveBestIfNeeded();
       const payout = commitRunRewards();
       const lvl = getLevelForScore(game.score);
@@ -1135,6 +1276,7 @@
       game.hitFlash = 0.25;
       saveBestIfNeeded();
       stopFailMusic();
+      stopHomeBgmCue(true);
       if (el.upgradeMusic) {
         el.upgradeMusic.pause();
         el.upgradeMusic.currentTime = 0;
@@ -1192,6 +1334,7 @@
       game.runCoinsEarned += 1;
       playScoreTick();
       unlockScoreAchievements(game.score);
+      maybeTriggerScoreBgmCue();
       updateHud();
       const milestone = getMilestoneForScore(game.score);
       if (milestone) {
@@ -1293,10 +1436,19 @@
 
       for (const pipe of game.pipes) {
         pipe.x -= game.currentSpeed * dt;
+        if (game.phase === 'playing') {
+          tryCollectPipeGear(pipe);
+        }
 
         if (!pipe.scored && pipe.x + pipe.w < game.player.x - game.player.radius) {
           pipe.scored = true;
-          onPointScored(getPipePassInfo(pipe));
+          const passInfo = getPipePassInfo(pipe);
+          onPointScored(passInfo);
+          if (pipe.gear && pipe.gear.collected && !pipe.gear.bonusScored && game.phase === 'playing') {
+            pipe.gear.bonusScored = true;
+            queueMicroReward('Gear Bonus +1');
+            applyScoreGain(passInfo);
+          }
           if (game.phase !== 'playing') break;
         }
       }
@@ -1389,6 +1541,69 @@
         ctx.fillRect(-w / 2, -h / 2, w, h);
       }
       ctx.restore();
+    }
+
+    function drawGearToken(x, y, r, spin = 0, collected = false) {
+      if (collected) return;
+      ctx.save();
+      ctx.translate(x, y);
+      ctx.rotate(spin);
+
+      // Outer teeth
+      const teeth = 10;
+      ctx.beginPath();
+      for (let i = 0; i < teeth * 2; i += 1) {
+        const ang = (i / (teeth * 2)) * Math.PI * 2;
+        const rr = i % 2 === 0 ? r : r * 0.78;
+        const px = Math.cos(ang) * rr;
+        const py = Math.sin(ang) * rr;
+        if (i === 0) ctx.moveTo(px, py);
+        else ctx.lineTo(px, py);
+      }
+      ctx.closePath();
+      ctx.fillStyle = 'rgba(255, 216, 120, .95)';
+      ctx.shadowColor = 'rgba(255, 201, 84, .35)';
+      ctx.shadowBlur = 14;
+      ctx.fill();
+      ctx.lineWidth = 1.5;
+      ctx.strokeStyle = 'rgba(255,255,255,.42)';
+      ctx.stroke();
+
+      // Inner ring
+      ctx.shadowBlur = 0;
+      ctx.beginPath();
+      ctx.arc(0, 0, r * 0.56, 0, Math.PI * 2);
+      ctx.fillStyle = 'rgba(131, 85, 24, .88)';
+      ctx.fill();
+      ctx.beginPath();
+      ctx.arc(0, 0, r * 0.28, 0, Math.PI * 2);
+      ctx.fillStyle = 'rgba(242, 236, 212, .92)';
+      ctx.fill();
+
+      // Subtle pulse halo
+      ctx.beginPath();
+      ctx.arc(0, 0, r + 4 + Math.sin(game.worldTime * 8) * 1.2, 0, Math.PI * 2);
+      ctx.strokeStyle = 'rgba(255, 218, 118, .18)';
+      ctx.lineWidth = 2;
+      ctx.stroke();
+
+      ctx.restore();
+    }
+
+    function drawPipeGears() {
+      for (const pipe of game.pipes) {
+        if (!pipe.gear || pipe.gear.collected) continue;
+        const pos = getPipeGearWorldPos(pipe);
+        if (!pos) continue;
+        if (pos.x < -40 || pos.x > W + 40) continue;
+        drawGearToken(
+          pos.x,
+          pos.y,
+          pipe.gear.r,
+          game.worldTime * (pipe.gear.spin || 1.8) + (pipe.gear.phase || 0),
+          pipe.gear.collected
+        );
+      }
     }
 
     function drawPipes() {
@@ -1598,11 +1813,10 @@
 
       const level = currentLevelConfig();
       drawSky(level);
-      drawMilestones();
       drawPipes();
+      drawPipeGears();
       drawGround(level);
       drawPlayer();
-      drawLevelBadge();
       drawHitFlash();
 
       ctx.restore();
@@ -1717,6 +1931,7 @@
         if (document.hidden) {
           el.failMusic.pause();
           if (el.upgradeMusic) el.upgradeMusic.pause();
+          if (el.homeBgmCue) el.homeBgmCue.pause();
           if (app.screen === 'home') el.homeVideo.pause();
         } else if (app.screen === 'home') {
           playHomeVideo();
