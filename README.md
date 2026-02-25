@@ -45,10 +45,8 @@ Vercel will serve `index.html`, `styles/`, `scripts/`, and `assets/` as static f
 ## Asset files used
 - `assets/home-video.mp4` (home screen full-fill video)
 - `assets/obstacle.png` (top/bottom obstacles)
-- `assets/level-1.png`
-- `assets/level-2.png`
-- `assets/level-3.png`
-- `assets/level-4.png`
+- `assets/sprite-1.webp` ... `assets/sprite-6.webp` (primary gameplay sprite pool)
+- `assets/level10-upgrade.png` (level-up animation sprite)
 - `assets/winner-display.png`
 - `assets/fail-sprite.webp`
 - `assets/fail-music.mp3`

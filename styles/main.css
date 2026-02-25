@@ -451,7 +451,7 @@
         rgba(255,255,255,.02);
       padding: 12px;
       display: grid;
-      grid-template-columns: 80px 1fr;
+      grid-template-columns: 104px 1fr;
       grid-template-rows: auto auto;
       gap: 8px 10px;
       align-items: center;
@@ -471,8 +471,8 @@
     }
 
     .splashFounderPhoto {
-      width: 80px;
-      height: 80px;
+      width: 104px;
+      height: 104px;
       object-fit: cover;
       border-radius: 14px;
       border: 1px solid rgba(255,255,255,.14);
@@ -683,8 +683,8 @@
     }
 
     .homeFounderPhoto {
-      width: 44px;
-      height: 44px;
+      width: 58px;
+      height: 58px;
       object-fit: cover;
       border-radius: 999px;
       border: 1px solid rgba(255,255,255,.16);
@@ -1601,8 +1601,8 @@
       }
 
       .splashFounderPhoto {
-        width: 68px;
-        height: 68px;
+        width: 88px;
+        height: 88px;
       }
 
       .splashFounderMeta h3 {

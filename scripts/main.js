@@ -13,6 +13,7 @@
     const MILESTONE_EVERY = CONFIG.milestoneEvery || 10;
     const LAUNCH_SEQUENCE = CONFIG.launchSequence || {};
     const UPGRADE_SEQUENCE = CONFIG.upgradeSequence || {};
+    const SPRITE_POOL = buildSpritePool(CONFIG.sprites, LEVELS);
     const META_STORAGE_KEY = `${STORAGE_KEY}_meta_v1`;
     const COSMETICS = [
       { id: 'default', name: 'Default', cost: 0, pf1: '#78f4c5', pf2: '#5ba2ff', pf3: '#f0b15f', comboGlow: 'rgba(127,255,210,.26)', ring: 'rgba(255,255,255,.7)' },
@@ -98,6 +99,10 @@
     };
 
     const ctx = el.canvas.getContext('2d');
+    ctx.imageSmoothingEnabled = true;
+    if ('imageSmoothingQuality' in ctx) {
+      ctx.imageSmoothingQuality = 'high';
+    }
 
     const app = {
       bootStage: 'splash', // splash | home | game
@@ -226,6 +231,35 @@
       return currentMode(mode) === 'classic';
     }
 
+    function buildSpritePool(spriteEntries, levels) {
+      const raw = Array.isArray(spriteEntries) && spriteEntries.length
+        ? spriteEntries
+        : (levels || []).map((lvl, i) => ({ src: lvl?.sprite, name: lvl?.name || `Sprite ${i + 1}` }));
+
+      return raw
+        .map((entry, i) => {
+          if (!entry) return null;
+          if (typeof entry === 'string') {
+            return {
+              src: entry,
+              name: `Sprite ${i + 1}`,
+              scale: 1,
+              yOffset: 0,
+              hitboxScale: 1
+            };
+          }
+          if (!entry.src) return null;
+          return {
+            src: entry.src,
+            name: entry.name || `Sprite ${i + 1}`,
+            scale: Number.isFinite(entry.scale) ? entry.scale : 1,
+            yOffset: Number.isFinite(entry.yOffset) ? entry.yOffset : 0,
+            hitboxScale: Number.isFinite(entry.hitboxScale) ? entry.hitboxScale : 1
+          };
+        })
+        .filter(Boolean);
+    }
+
     function getTierIndexForScore(score, mode = null) {
       const safeScore = Math.max(0, Math.floor(score));
       if (isEndlessMode(mode)) {
@@ -270,6 +304,22 @@
       const n = Math.max(0, score);
       const remainder = n % SCORE_CAP;
       return remainder === 0 && n > 0 ? SCORE_CAP : remainder;
+    }
+
+    function getSpriteIndexForScore(score = game.score, mode = null) {
+      if (!SPRITE_POOL.length) return 0;
+      const safeScore = Math.max(0, Math.floor(score));
+      if (isClassicMode(mode)) {
+        const capped = Math.max(0, Math.min(safeScore, SCORE_CAP));
+        const spriteScore = capped >= SCORE_CAP ? (SCORE_CAP - 1) : capped;
+        return Math.floor(spriteScore / MILESTONE_EVERY) % SPRITE_POOL.length;
+      }
+      return Math.floor(safeScore / MILESTONE_EVERY) % SPRITE_POOL.length;
+    }
+
+    function getSpriteConfigForScore(score = game.score, mode = null) {
+      if (!SPRITE_POOL.length) return null;
+      return SPRITE_POOL[getSpriteIndexForScore(score, mode)] || SPRITE_POOL[0];
     }
 
     function getSelectedCosmetic() {
@@ -810,10 +860,7 @@
     function preloadImages() {
       const sources = [
         'assets/obstacle.png',
-        'assets/level-1.png',
-        'assets/level-2.png',
-        'assets/level-3.png',
-        'assets/level-4.png',
+        ...SPRITE_POOL.map((sprite) => sprite.src),
         LAUNCH_SEQUENCE.logo || 'assets/dl-logo.png',
         LAUNCH_SEQUENCE.lion || 'assets/team-lion.png',
         LAUNCH_SEQUENCE.founderPhoto || 'assets/founder.png',
@@ -1197,8 +1244,9 @@
     function showUpgradeOverlay(milestone) {
       if (!el.upgradeOverlay) return;
       const nextLevel = getLevelForScore(Math.min(milestone + 1, SCORE_CAP));
+      const nextSprite = getSpriteConfigForScore(milestone, game.mode);
       el.upgradeTitle.textContent = `Level ${milestone} Upgrade`;
-      el.upgradeSub.textContent = `Power-up animation playing. Next sprite: ${nextLevel.name}.`;
+      el.upgradeSub.textContent = `Power-up animation playing. Next sprite: ${(nextSprite && nextSprite.name) || nextLevel.name}.`;
       if (el.upgradeSpriteImg && UPGRADE_SEQUENCE.image) {
         el.upgradeSpriteImg.src = UPGRADE_SEQUENCE.image;
       }
@@ -1686,19 +1734,22 @@
     }
 
     function drawPlayer() {
-      const level = currentLevelConfig();
       const tuning = getLevelTuning(game.score, game.mode);
       const cosmetic = getSelectedCosmetic();
-      const visualSprite = (game.inlineUpgradeSpriteActive && UPGRADE_SEQUENCE.image) ? UPGRADE_SEQUENCE.image : level.sprite;
+      const spriteCfg = getSpriteConfigForScore(game.score, game.mode) || { src: null, scale: 1, yOffset: 0, hitboxScale: 1 };
+      const visualSprite = (game.inlineUpgradeSpriteActive && UPGRADE_SEQUENCE.image) ? UPGRADE_SEQUENCE.image : spriteCfg.src;
       const img = app.images[visualSprite];
       const p = game.player;
       const idleBob = Math.sin(game.worldTime * 7.2 + p.idlePhase) * (game.phase === 'playing' ? 2.8 : 5.0);
       const tapWave = Math.sin(game.worldTime * 16) * p.tapOsc * 6;
       const hover = idleBob + tapWave;
-      const drawH = (tuning.playerHeight + (game.inlineUpgradeSpriteActive ? 8 : 0)) + p.flapPulse * 5;
+      const spriteScale = game.inlineUpgradeSpriteActive ? 1 : (spriteCfg.scale || 1);
+      const spriteYOffset = game.inlineUpgradeSpriteActive ? 0 : (spriteCfg.yOffset || 0);
+      const hitboxScale = game.inlineUpgradeSpriteActive ? 1 : (spriteCfg.hitboxScale || 1);
+      const drawH = ((tuning.playerHeight * spriteScale) + (game.inlineUpgradeSpriteActive ? 8 : 0)) + p.flapPulse * 5;
       const aspect = img ? (img.naturalWidth / img.naturalHeight) : 0.6;
       const drawW = drawH * aspect;
-      p.radius = clamp(Math.min(drawW, drawH) * 0.17 + 8, 18, 29);
+      p.radius = clamp((Math.min(drawW, drawH) * 0.17 + 8) * hitboxScale, 16, 29);
 
       const scaleX = 1 + Math.sin(game.worldTime * 18) * p.flapPulse * 0.025;
       const scaleY = 1 - Math.sin(game.worldTime * 18) * p.flapPulse * 0.03;
@@ -1706,7 +1757,7 @@
       const blastAlpha = game.collisionBlastQueued ? Math.max(0, 1 - game.hitFlash * 0.95) : 1;
 
       ctx.save();
-      ctx.translate(p.x, p.y + hover);
+      ctx.translate(p.x, p.y + hover + spriteYOffset);
       ctx.rotate(p.angle);
       ctx.scale(scaleX * blastScale, scaleY * blastScale);
       ctx.globalAlpha = blastAlpha;
@@ -2014,7 +2065,7 @@
           app.assetsReady = true;
           el.playBtn.disabled = false;
           updateHomeModeUi();
-          if (el.assetStatus) el.assetStatus.textContent = 'Assets ready. 4 tiers active (0-10, 11-20, 21-30, 31-40).';
+          if (el.assetStatus) el.assetStatus.textContent = `Assets ready. ${LEVELS.length} tiers + ${SPRITE_POOL.length} primary sprites active.`;
         })
         .catch((err) => {
           console.error(err);
