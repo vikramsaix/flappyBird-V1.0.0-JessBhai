@@ -69,12 +69,10 @@
         <video id="homeVideo" class="homeVideo" src="assets/home-video.mp4" playsinline loop preload="auto"></video>
         <div class="homeVignette"></div>
         <div class="homeScanlines"></div>
+        <div class="brand homeTopBrand">
+          <h1 class="brandTitle">FLAPPY <span class="mutedWord">JESS</span></h1>
+        </div>
         <div class="homeChrome">
-          <div class="brand">
-            <h1 class="brandTitle">FLAPPY <span class="mutedWord">JESS</span></h1>
-            <p id="brandSub" class="brandSub">40 points to win • sprite swap every 10 • DL developers edition</p>
-          </div>
-
           <div class="homeFounderStrip" aria-label="Founder">
             <img id="homeFounderPhoto" class="homeFounderPhoto" src="assets/founder.png" alt="Dr Gnandeep Kodavali portrait" />
             <div class="homeFounderCopy">
@@ -96,6 +94,24 @@
               </div>
             </div>
 
+            <div class="statRow compactStatRow">
+              <div class="statCard compactStat">
+                <span class="statLabel">Coins</span>
+                <span class="statValue compactValue" id="homeCoins">0</span>
+              </div>
+              <div class="statCard compactStat">
+                <span class="statLabel">Badges</span>
+                <span class="statValue compactValue" id="homeBadgeCount">0 / 7</span>
+              </div>
+            </div>
+
+            <div class="metaControlRow">
+              <button id="modeToggleBtn" class="btn btnSecondary metaBtn" type="button">Mode: Classic</button>
+              <button id="cosmeticBtn" class="btn btnSecondary metaBtn" type="button">Skin: Default</button>
+            </div>
+
+            <div id="achievementStrip" class="achievementStrip" aria-label="Achievements"></div>
+
             <div class="btnRow">
               <button id="playBtn" class="btn btnPrimary" type="button" disabled>Loading Assets...</button>
               <button id="homeMuteBtn" class="btn btnSecondary" type="button">Sound: On</button>
@@ -103,6 +119,7 @@
 
           </div>
         </div>
+        <div id="homeBadgePopupStack" class="badgeToastStack" aria-live="polite" aria-atomic="true"></div>
       </div>
     </section>
 
@@ -113,8 +130,11 @@
         <div class="hud" aria-hidden="false">
           <div class="hudTop">
             <div class="chipRow">
+              <div class="chip">Mode <b id="hudMode">CLS</b></div>
               <div class="chip">Score <b id="hudScore">0</b></div>
               <div class="chip">Level <b id="hudLevel">1</b></div>
+              <div class="chip comboChip" id="comboChip">Combo <b id="hudCombo">x1.0</b></div>
+              <div class="chip">Revive <b id="hudRevive">1</b></div>
               <div class="chip">Best <b id="hudBest">0</b></div>
             </div>
             <div class="hudActions">
@@ -124,15 +144,19 @@
           </div>
           <div class="progressBar" aria-label="Progress to 40 points">
             <div id="progressFill" class="progressFill"></div>
+            <div id="progressBestMarker" class="progressBestMarker hidden" aria-hidden="true">
+              <span id="progressBestLabel" class="progressBestLabel">Best 0</span>
+            </div>
           </div>
         </div>
 
+        <div id="microRewardToast" class="microRewardToast" aria-live="polite"></div>
         <div id="tapPrompt" class="tapPrompt show">Tap / Click / Space to Jump</div>
 
         <div id="gameOverOverlay" class="overlay" aria-hidden="true">
           <div class="overlayCard">
             <h2 class="overlayTitle">Run Failed</h2>
-            <p class="overlaySub">Failure sprite + fail music will play here. Hit retry to run again.</p>
+            <p id="failMessage" class="overlaySub">Failure sprite + fail music will play here. Hit retry to run again.</p>
 
             <div class="overlayImgWrap">
               <span class="failTag">Failed</span>

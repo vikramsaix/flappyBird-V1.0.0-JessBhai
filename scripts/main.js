@@ -13,6 +13,22 @@
     const MILESTONE_EVERY = CONFIG.milestoneEvery || 10;
     const LAUNCH_SEQUENCE = CONFIG.launchSequence || {};
     const UPGRADE_SEQUENCE = CONFIG.upgradeSequence || {};
+    const META_STORAGE_KEY = `${STORAGE_KEY}_meta_v1`;
+    const COSMETICS = [
+      { id: 'default', name: 'Default', cost: 0, pf1: '#78f4c5', pf2: '#5ba2ff', pf3: '#f0b15f', comboGlow: 'rgba(127,255,210,.26)', ring: 'rgba(255,255,255,.7)' },
+      { id: 'neon', name: 'Neon Mint', cost: 35, pf1: '#8bffcc', pf2: '#2cf2ff', pf3: '#5c8cff', comboGlow: 'rgba(44,242,255,.28)', ring: 'rgba(137,255,225,.82)' },
+      { id: 'ember', name: 'Ember Gold', cost: 75, pf1: '#ffd46f', pf2: '#ff8a5b', pf3: '#ff5d89', comboGlow: 'rgba(255,138,91,.28)', ring: 'rgba(255,210,120,.82)' },
+      { id: 'violet', name: 'Violet Flux', cost: 120, pf1: '#b894ff', pf2: '#7a8dff', pf3: '#54d2ff', comboGlow: 'rgba(184,148,255,.28)', ring: 'rgba(201,180,255,.85)' }
+    ];
+    const ACHIEVEMENTS = [
+      { id: 'first_win', label: 'First Win', hint: 'Clear 40 in classic mode' },
+      { id: 'score_10', label: 'Score 10', hint: 'Reach 10 points' },
+      { id: 'score_20', label: 'Score 20', hint: 'Reach 20 points' },
+      { id: 'score_30', label: 'Score 30', hint: 'Reach 30 points' },
+      { id: 'score_40', label: 'Score 40', hint: 'Reach 40 points' },
+      { id: 'retry_3', label: 'Retry x3', hint: 'Retry 3 runs in a row' },
+      { id: 'perfect_tier_upgrade', label: 'Perfect Tier', hint: 'Hit a tier upgrade on a clean pass' }
+    ];
 
     const el = {
       splashScreen: document.getElementById('splashScreen'),
@@ -28,17 +44,30 @@
       homeVideo: document.getElementById('homeVideo'),
       playBtn: document.getElementById('playBtn'),
       homeMuteBtn: document.getElementById('homeMuteBtn'),
+      modeToggleBtn: document.getElementById('modeToggleBtn'),
+      cosmeticBtn: document.getElementById('cosmeticBtn'),
       gameMuteBtn: document.getElementById('gameMuteBtn'),
       gameHomeBtn: document.getElementById('gameHomeBtn'),
       homeHighScore: document.getElementById('homeHighScore'),
+      homeCoins: document.getElementById('homeCoins'),
+      homeBadgeCount: document.getElementById('homeBadgeCount'),
+      achievementStrip: document.getElementById('achievementStrip'),
+      homeBadgePopupStack: document.getElementById('homeBadgePopupStack'),
       homeFounderName: document.getElementById('homeFounderName'),
       homeFounderPhoto: document.getElementById('homeFounderPhoto'),
       goalValue: document.getElementById('goalValue'),
       brandSub: document.getElementById('brandSub'),
+      hudMode: document.getElementById('hudMode'),
       hudScore: document.getElementById('hudScore'),
       hudLevel: document.getElementById('hudLevel'),
+      hudCombo: document.getElementById('hudCombo'),
+      comboChip: document.getElementById('comboChip'),
+      hudRevive: document.getElementById('hudRevive'),
       hudBest: document.getElementById('hudBest'),
       progressFill: document.getElementById('progressFill'),
+      progressBestMarker: document.getElementById('progressBestMarker'),
+      progressBestLabel: document.getElementById('progressBestLabel'),
+      microRewardToast: document.getElementById('microRewardToast'),
       tapPrompt: document.getElementById('tapPrompt'),
       canvas: document.getElementById('gameCanvas'),
       assetStatus: document.getElementById('assetStatus'),
@@ -57,6 +86,7 @@
       failScore: document.getElementById('failScore'),
       failLevel: document.getElementById('failLevel'),
       failBest: document.getElementById('failBest'),
+      failMessage: document.getElementById('failMessage'),
       winScore: document.getElementById('winScore'),
       winLevel: document.getElementById('winLevel'),
       winBest: document.getElementById('winBest'),
@@ -72,15 +102,24 @@
       muted: false,
       homeVideoForcedMuted: false,
       audioCtx: null,
+      meta: loadMeta(),
+      selectedMode: 'classic',
       assetsReady: false,
       images: {},
       raf: 0,
       triedAutoplay: false,
       splashTimer: null,
+      splashExitTimer: null,
+      splashExiting: false,
+      retryStreak: 0,
+      badgeToastQueue: [],
+      badgeToastActive: false,
+      microToastTimer: null,
       upgradeTimer: null
     };
 
     const game = {
+      mode: 'classic',
       phase: 'ready', // ready | playing | upgrading | gameover | win
       score: 0,
       best: Number(localStorage.getItem(STORAGE_KEY) || 0),
@@ -95,6 +134,15 @@
       hitFlash: 0,
       shake: 0,
       floorPulse: 0,
+      runCoinsEarned: 0,
+      rewardsCommitted: false,
+      comboStreak: 0,
+      comboPulse: 0,
+      comboGlow: 0,
+      lastPassWasClean: false,
+      reviveAvailable: true,
+      reviveUsed: false,
+      reviveShieldTime: 0,
       pendingLevelUpgrade: null,
       upgradeMilestonesPlayed: [],
       inlineUpgradeSpriteActive: false,
@@ -125,15 +173,241 @@
       return a + (b - a) * t;
     }
 
-    function getLevelForScore(score) {
-      for (const level of LEVELS) {
-        if (score <= level.maxScore) return level;
+    function loadMeta() {
+      let raw = null;
+      try {
+        raw = JSON.parse(localStorage.getItem(META_STORAGE_KEY) || '{}') || {};
+      } catch {
+        raw = {};
       }
-      return LEVELS[LEVELS.length - 1];
+      const validIds = new Set(COSMETICS.map((c) => c.id));
+      const ownedCosmetics = Array.isArray(raw.ownedCosmetics)
+        ? raw.ownedCosmetics.filter((id) => validIds.has(id))
+        : ['default'];
+      if (!ownedCosmetics.includes('default')) ownedCosmetics.unshift('default');
+      const selectedCosmetic = (typeof raw.selectedCosmetic === 'string' && validIds.has(raw.selectedCosmetic))
+        ? raw.selectedCosmetic
+        : 'default';
+      const preferredMode = raw.preferredMode === 'endless' ? 'endless' : 'classic';
+      return {
+        coins: Math.max(0, Math.floor(Number(raw.coins) || 0)),
+        ownedCosmetics: [...new Set(ownedCosmetics)],
+        selectedCosmetic: ownedCosmetics.includes(selectedCosmetic) ? selectedCosmetic : ownedCosmetics[0],
+        achievements: (raw.achievements && typeof raw.achievements === 'object') ? raw.achievements : {},
+        endlessUnlocked: !!raw.endlessUnlocked,
+        preferredMode
+      };
     }
 
-    function getLevelIndex(score) {
-      return LEVELS.indexOf(getLevelForScore(score));
+    function saveMeta() {
+      if (!app.meta) return;
+      app.meta.preferredMode = app.selectedMode;
+      localStorage.setItem(META_STORAGE_KEY, JSON.stringify(app.meta));
+    }
+
+    function currentMode(mode = null) {
+      if (mode) return mode;
+      if (app.screen === 'game') return game.mode || app.selectedMode || 'classic';
+      return app.selectedMode || game.mode || 'classic';
+    }
+
+    function isEndlessMode(mode = null) {
+      return currentMode(mode) === 'endless';
+    }
+
+    function isClassicMode(mode = null) {
+      return currentMode(mode) === 'classic';
+    }
+
+    function getTierIndexForScore(score, mode = null) {
+      const safeScore = Math.max(0, Math.floor(score));
+      if (isEndlessMode(mode)) {
+        return Math.floor(safeScore / MILESTONE_EVERY) % LEVELS.length;
+      }
+      for (let i = 0; i < LEVELS.length; i += 1) {
+        if (safeScore <= LEVELS[i].maxScore) return i;
+      }
+      return LEVELS.length - 1;
+    }
+
+    function getLevelForScore(score, mode = null) {
+      return LEVELS[getTierIndexForScore(score, mode)] || LEVELS[LEVELS.length - 1];
+    }
+
+    function getLevelIndex(score, mode = null) {
+      return getTierIndexForScore(score, mode);
+    }
+
+    function getEndlessLoop(score = game.score) {
+      const cycleSpan = MILESTONE_EVERY * LEVELS.length;
+      return Math.floor(Math.max(0, score) / cycleSpan);
+    }
+
+    function getLevelTuning(score = game.score, mode = null) {
+      const base = getLevelForScore(score, mode);
+      if (!isEndlessMode(mode)) return base;
+      const loop = getEndlessLoop(score);
+      const loopScale = Math.pow(CONFIG.difficultyMultiplierPerTier || 1.1, loop);
+      return {
+        ...base,
+        speed: Math.round(base.speed * loopScale),
+        gap: Math.max(166, Math.round(base.gap - loop * 10)),
+        pipeWidth: Math.min(106, Math.round(base.pipeWidth + loop * 2)),
+        playerHeight: Math.max(90, Math.round(base.playerHeight - loop * 2)),
+        endlessLoop: loop
+      };
+    }
+
+    function getDisplayProgressValue(score = game.score, mode = null) {
+      if (isClassicMode(mode)) return Math.min(score, SCORE_CAP);
+      const n = Math.max(0, score);
+      const remainder = n % SCORE_CAP;
+      return remainder === 0 && n > 0 ? SCORE_CAP : remainder;
+    }
+
+    function getSelectedCosmetic() {
+      const id = app.meta?.selectedCosmetic || 'default';
+      return COSMETICS.find((c) => c.id === id) || COSMETICS[0];
+    }
+
+    function applyCosmeticTheme() {
+      const cosmetic = getSelectedCosmetic();
+      const root = document.documentElement;
+      root.style.setProperty('--pf1', cosmetic.pf1);
+      root.style.setProperty('--pf2', cosmetic.pf2);
+      root.style.setProperty('--pf3', cosmetic.pf3);
+    }
+
+    function getUnlockedAchievementCount() {
+      return ACHIEVEMENTS.reduce((count, item) => count + (app.meta.achievements[item.id] ? 1 : 0), 0);
+    }
+
+    function queueBadgeToast(title, body, icon = '★') {
+      app.badgeToastQueue.push({ title, body, icon });
+      flushBadgeToasts();
+    }
+
+    function flushBadgeToasts() {
+      if (app.screen !== 'home') return;
+      if (app.badgeToastActive || !el.homeBadgePopupStack || app.badgeToastQueue.length === 0) return;
+      const item = app.badgeToastQueue.shift();
+      app.badgeToastActive = true;
+
+      const toast = document.createElement('div');
+      toast.className = 'badgeToast';
+      toast.innerHTML = `
+        <div class="badgeToastIcon">${item.icon}</div>
+        <div>
+          <div class="badgeToastTitle">${item.title}</div>
+          <div class="badgeToastBody">${item.body}</div>
+        </div>
+      `;
+      el.homeBadgePopupStack.appendChild(toast);
+
+      const exitAfter = 2000;
+      setTimeout(() => {
+        toast.classList.add('out');
+        setTimeout(() => {
+          toast.remove();
+          app.badgeToastActive = false;
+          flushBadgeToasts();
+        }, 240);
+      }, exitAfter);
+    }
+
+    function renderAchievementStrip() {
+      if (!el.achievementStrip) return;
+      el.achievementStrip.innerHTML = '';
+      for (const ach of ACHIEVEMENTS) {
+        const unlocked = !!app.meta.achievements[ach.id];
+        const chip = document.createElement('div');
+        chip.className = `achievementChip ${unlocked ? 'unlocked' : 'locked'}`;
+        chip.title = unlocked ? `${ach.label} unlocked` : ach.hint;
+        chip.innerHTML = `<span class="dot" aria-hidden="true"></span><span>${ach.label}</span>`;
+        el.achievementStrip.appendChild(chip);
+      }
+      if (el.homeBadgeCount) {
+        el.homeBadgeCount.textContent = `${getUnlockedAchievementCount()} / ${ACHIEVEMENTS.length}`;
+      }
+    }
+
+    function unlockAchievement(id, reasonText = '') {
+      if (!id || app.meta.achievements[id]) return false;
+      const found = ACHIEVEMENTS.find((a) => a.id === id);
+      if (!found) return false;
+      app.meta.achievements[id] = true;
+      saveMeta();
+      renderAchievementStrip();
+      queueBadgeToast('Achievement Unlocked', reasonText || found.label, '🏅');
+      return true;
+    }
+
+    function unlockScoreAchievements(score) {
+      if (score >= 10) unlockAchievement('score_10', 'Reached 10 points');
+      if (score >= 20) unlockAchievement('score_20', 'Reached 20 points');
+      if (score >= 30) unlockAchievement('score_30', 'Reached 30 points');
+      if (score >= 40) unlockAchievement('score_40', 'Reached 40 points');
+    }
+
+    function updateModeButtonText() {
+      if (!el.modeToggleBtn) return;
+      if (!app.meta.endlessUnlocked) {
+        el.modeToggleBtn.textContent = 'Mode: Classic (Unlock Endless)';
+        return;
+      }
+      el.modeToggleBtn.textContent = `Mode: ${app.selectedMode === 'endless' ? 'Endless' : 'Classic'}`;
+    }
+
+    function updateCosmeticButtonText() {
+      if (!el.cosmeticBtn) return;
+      const current = getSelectedCosmetic();
+      const idx = COSMETICS.findIndex((c) => c.id === current.id);
+      const next = COSMETICS[(idx + 1) % COSMETICS.length];
+      const nextOwned = app.meta.ownedCosmetics.includes(next.id);
+      if (nextOwned) {
+        el.cosmeticBtn.textContent = `Skin: ${current.name} → ${next.name}`;
+      } else {
+        el.cosmeticBtn.textContent = `Unlock ${next.name} (${next.cost}c)`;
+      }
+    }
+
+    function updateHomeModeUi() {
+      if (el.goalValue) el.goalValue.textContent = app.selectedMode === 'endless' ? '∞' : String(SCORE_CAP);
+      if (el.brandSub) {
+        el.brandSub.textContent = app.selectedMode === 'endless'
+          ? `Endless mode • upgrades every ${MILESTONE_EVERY} • DL developers edition`
+          : `${SCORE_CAP} points to win • sprite swap every ${MILESTONE_EVERY} • DL developers edition`;
+      }
+      if (el.playBtn) {
+        if (!app.assetsReady) {
+          el.playBtn.textContent = 'Loading Assets...';
+        } else {
+          el.playBtn.textContent = app.selectedMode === 'endless' ? 'Play Endless' : 'Play Classic';
+        }
+      }
+      updateModeButtonText();
+      updateCosmeticButtonText();
+      if (el.homeCoins) el.homeCoins.textContent = String(app.meta.coins);
+      renderAchievementStrip();
+    }
+
+    function updateProgressBestMarker() {
+      if (!el.progressBestMarker || !el.progressBestLabel) return;
+      if (!game.best || game.best <= 0) {
+        el.progressBestMarker.classList.add('hidden');
+        return;
+      }
+      let markerScore = game.best;
+      if (isEndlessMode()) {
+        const seg = game.best % SCORE_CAP;
+        markerScore = seg === 0 ? SCORE_CAP : seg;
+      } else {
+        markerScore = Math.min(game.best, SCORE_CAP);
+      }
+      const pct = clamp((markerScore / SCORE_CAP) * 100, 0, 100);
+      el.progressBestMarker.style.left = `${pct}%`;
+      el.progressBestLabel.textContent = `Best ${game.best}`;
+      el.progressBestMarker.classList.remove('hidden');
     }
 
     function setScreen(name) {
@@ -141,6 +415,7 @@
       if (el.splashScreen) el.splashScreen.classList.toggle('active', name === 'splash');
       el.homeScreen.classList.toggle('active', name === 'home');
       el.gameScreen.classList.toggle('active', name === 'game');
+      if (name === 'home') flushBadgeToasts();
     }
 
     function hideAllOverlays() {
@@ -161,21 +436,26 @@
     function updateBestUI() {
       el.homeHighScore.textContent = String(game.best);
       el.hudBest.textContent = String(game.best);
+      updateProgressBestMarker();
+      updateHomeModeUi();
     }
 
     function updateHud() {
       const lvl = getLevelForScore(game.score);
+      const progressValue = getDisplayProgressValue();
+      const comboMult = 1 + Math.min(1.5, Math.floor(game.comboStreak / 3) * 0.25);
       el.hudScore.textContent = String(game.score);
       el.hudLevel.textContent = lvl.label;
+      if (el.hudMode) el.hudMode.textContent = isEndlessMode() ? 'END' : 'CLS';
+      if (el.hudCombo) el.hudCombo.textContent = `x${comboMult.toFixed(2).replace(/\.00$/, '.0')}`;
+      if (el.comboChip) el.comboChip.classList.toggle('active', game.comboStreak >= 2);
+      if (el.hudRevive) el.hudRevive.textContent = game.reviveAvailable ? '1' : '0';
       el.hudBest.textContent = String(game.best);
-      el.progressFill.style.width = `${(Math.min(game.score, SCORE_CAP) / SCORE_CAP) * 100}%`;
+      el.progressFill.style.width = `${(progressValue / SCORE_CAP) * 100}%`;
+      updateProgressBestMarker();
     }
 
     function applyStaticUiFromConfig() {
-      if (el.goalValue) el.goalValue.textContent = String(SCORE_CAP);
-      if (el.brandSub) {
-        el.brandSub.textContent = `${SCORE_CAP} points to win • sprite swap every ${MILESTONE_EVERY} • DL developers edition`;
-      }
       if (el.splashFounderName && LAUNCH_SEQUENCE.founderName) {
         el.splashFounderName.textContent = LAUNCH_SEQUENCE.founderName;
       }
@@ -186,6 +466,9 @@
         if (el.splashFounderPhoto) el.splashFounderPhoto.src = LAUNCH_SEQUENCE.founderPhoto;
         if (el.homeFounderPhoto) el.homeFounderPhoto.src = LAUNCH_SEQUENCE.founderPhoto;
       }
+      applyCosmeticTheme();
+      updateHomeModeUi();
+      updateProgressBestMarker();
     }
 
     function syncAudioButtons() {
@@ -219,6 +502,90 @@
       if (app.screen === 'home') {
         playHomeVideo(true);
       }
+    }
+
+    function queueMicroReward(text) {
+      if (!el.microRewardToast || !text) return;
+      el.microRewardToast.textContent = text;
+      el.microRewardToast.classList.add('show');
+      if (app.microToastTimer) clearTimeout(app.microToastTimer);
+      app.microToastTimer = setTimeout(() => {
+        el.microRewardToast.classList.remove('show');
+      }, 1250);
+    }
+
+    function addRunCoins(amount, label = '') {
+      const safeAmount = Math.max(0, Math.floor(amount || 0));
+      if (!safeAmount) return;
+      game.runCoinsEarned += safeAmount;
+      if (label) {
+        queueMicroReward(`${label} +${safeAmount}C`);
+      }
+    }
+
+    function commitRunRewards(extraCoins = 0) {
+      if (game.rewardsCommitted) return 0;
+      game.rewardsCommitted = true;
+      const payout = Math.max(0, Math.floor(game.runCoinsEarned + extraCoins));
+      if (payout > 0) {
+        app.meta.coins += payout;
+        saveMeta();
+        updateHomeModeUi();
+      }
+      return payout;
+    }
+
+    function resetRetryStreak() {
+      app.retryStreak = 0;
+    }
+
+    function recordRetryAndRestart() {
+      app.retryStreak += 1;
+      if (app.retryStreak >= 3) {
+        unlockAchievement('retry_3', 'Retried 3 runs in a row');
+      }
+      restartGame();
+    }
+
+    function toggleModePreference() {
+      if (!app.meta.endlessUnlocked) {
+        queueBadgeToast('Mode Locked', 'Reach 40 in Classic to unlock Endless', '!');
+        return;
+      }
+      app.selectedMode = app.selectedMode === 'endless' ? 'classic' : 'endless';
+      saveMeta();
+      updateHomeModeUi();
+      updateProgressBestMarker();
+      queueBadgeToast('Mode Selected', app.selectedMode === 'endless' ? 'Endless is active' : 'Classic is active', app.selectedMode === 'endless' ? '∞' : 'C');
+    }
+
+    function handleCosmeticButton() {
+      const current = getSelectedCosmetic();
+      const idx = COSMETICS.findIndex((c) => c.id === current.id);
+      const next = COSMETICS[(idx + 1) % COSMETICS.length];
+      if (!next) return;
+
+      if (app.meta.ownedCosmetics.includes(next.id)) {
+        app.meta.selectedCosmetic = next.id;
+        saveMeta();
+        applyCosmeticTheme();
+        updateHomeModeUi();
+        queueBadgeToast('Skin Selected', next.name, '+');
+        return;
+      }
+
+      if (app.meta.coins < next.cost) {
+        queueBadgeToast('Not Enough Coins', `Need ${next.cost - app.meta.coins} more for ${next.name}`, 'C');
+        return;
+      }
+
+      app.meta.coins -= next.cost;
+      app.meta.ownedCosmetics.push(next.id);
+      app.meta.selectedCosmetic = next.id;
+      saveMeta();
+      applyCosmeticTheme();
+      updateHomeModeUi();
+      queueBadgeToast('Cosmetic Unlocked', `${next.name} equipped`, '+');
     }
 
     function ensureAudioContext() {
@@ -397,17 +764,29 @@
       ];
     }
 
-    function resetRun() {
+    function resetRun(mode = app.selectedMode) {
+      const resolvedMode = (mode === 'endless' && app.meta.endlessUnlocked) ? 'endless' : 'classic';
+      game.mode = resolvedMode;
+      const startTuning = getLevelTuning(0, resolvedMode);
       game.phase = 'playing';
       game.score = 0;
       game.worldTime = 0;
       game.spawnTimer = 0.7;
       game.scrollX = 0;
-      game.currentSpeed = LEVELS[0].speed;
+      game.currentSpeed = startTuning.speed;
       game.pipes = [];
       game.hitFlash = 0;
       game.shake = 0;
       game.floorPulse = 0;
+      game.runCoinsEarned = 0;
+      game.rewardsCommitted = false;
+      game.comboStreak = 0;
+      game.comboPulse = 0;
+      game.comboGlow = 0;
+      game.lastPassWasClean = false;
+      game.reviveAvailable = true;
+      game.reviveUsed = false;
+      game.reviveShieldTime = 0;
       game.pendingLevelUpgrade = null;
       game.upgradeMilestonesPlayed = [];
       game.inlineUpgradeSpriteActive = false;
@@ -430,6 +809,10 @@
         el.upgradeMusic.pause();
         el.upgradeMusic.currentTime = 0;
       }
+      if (el.microRewardToast) {
+        el.microRewardToast.classList.remove('show');
+        el.microRewardToast.textContent = '';
+      }
       updateHud();
     }
 
@@ -446,6 +829,7 @@
       }
       hideAllOverlays();
       setTapPrompt(true);
+      resetRetryStreak();
       setScreen('home');
       updateBestUI();
       playHomeVideo();
@@ -458,7 +842,8 @@
       resumeAudioContext();
       setScreen('game');
       pauseHomeVideo();
-      resetRun();
+      resetRetryStreak();
+      resetRun(app.selectedMode);
       updateHud();
     }
 
@@ -468,27 +853,27 @@
       resumeAudioContext();
       setScreen('game');
       pauseHomeVideo();
-      resetRun();
+      resetRun(game.mode || app.selectedMode);
     }
 
     function currentLevelConfig() {
-      return getLevelForScore(game.score);
+      return getLevelForScore(game.score, game.mode);
     }
 
     function levelIndexForScore(score) {
-      return LEVELS.indexOf(getLevelForScore(score));
+      return getLevelIndex(score, game.mode);
     }
 
     function getMilestoneForScore(score) {
       if (score <= 0) return null;
       if (score % MILESTONE_EVERY !== 0) return null;
-      if (score >= SCORE_CAP) return null;
+      if (isClassicMode(game.mode) && score >= SCORE_CAP) return null;
       return score;
     }
 
     function spawnPipe() {
-      const level = currentLevelConfig();
-      const gap = level.gap;
+      const tuning = getLevelTuning(game.score, game.mode);
+      const gap = tuning.gap;
       const topMargin = 74;
       const bottomMargin = 126;
       const minGapCenter = topMargin + gap / 2;
@@ -496,7 +881,7 @@
       const gapY = rand(minGapCenter, maxGapCenter);
       game.pipes.push({
         x: W + 36,
-        w: level.pipeWidth,
+        w: tuning.pipeWidth,
         gap,
         gapY,
         scored: false
@@ -532,6 +917,7 @@
     }
 
     function collisionWithPipes() {
+      if (game.reviveShieldTime > 0) return false;
       const r = game.player.radius;
       const cx = game.player.x;
       const cy = game.player.y;
@@ -544,6 +930,83 @@
         }
       }
       return false;
+    }
+
+    function getPipePassInfo(pipe) {
+      const topEdge = pipe.gapY - pipe.gap / 2;
+      const bottomEdge = pipe.gapY + pipe.gap / 2;
+      const clearanceTop = (game.player.y - game.player.radius) - topEdge;
+      const clearanceBottom = bottomEdge - (game.player.y + game.player.radius);
+      const minClearance = Math.min(clearanceTop, clearanceBottom);
+      const cleanMargin = 16;
+      return {
+        clean: minClearance >= cleanMargin,
+        clearance: minClearance
+      };
+    }
+
+    function getFailMotivationText() {
+      const score = game.score;
+      const nextMilestone = Math.ceil((score + 1) / MILESTONE_EVERY) * MILESTONE_EVERY;
+      const toMilestone = nextMilestone > score ? nextMilestone - score : MILESTONE_EVERY;
+      if (isClassicMode(game.mode)) {
+        const toWin = Math.max(0, SCORE_CAP - score);
+        if (toWin === 0) {
+          return 'Tap anywhere to retry. You hit the classic cap already.';
+        }
+        if (toMilestone < toWin) {
+          return `${toMilestone} more point${toMilestone === 1 ? '' : 's'} to level up. Tap anywhere to retry.`;
+        }
+        return `${toWin} more point${toWin === 1 ? '' : 's'} to win classic mode. Tap anywhere to retry.`;
+      }
+      const nextTier = nextMilestone;
+      return `${toMilestone} more point${toMilestone === 1 ? '' : 's'} to the next tier (${nextTier}). Tap anywhere to retry.`;
+    }
+
+    function tryConsumeRevive(cause) {
+      if (!game.reviveAvailable || game.reviveUsed) return false;
+      if (game.score < 15) return false;
+
+      game.reviveAvailable = false;
+      game.reviveUsed = true;
+      game.reviveShieldTime = 1.05;
+      game.phase = 'playing';
+      game.hitFlash = Math.max(game.hitFlash, 0.55);
+      game.shake = Math.max(game.shake, 5);
+      game.floorPulse = 1;
+
+      let reviveY = clamp(H * 0.48, game.player.radius + 4, GROUND_Y - game.player.radius - 8);
+      if (cause === 'obstacle' && game.pipes.length) {
+        let nearest = null;
+        let minDx = Infinity;
+        for (const p of game.pipes) {
+          const dx = Math.abs((p.x + p.w * 0.5) - game.player.x);
+          if (dx < minDx) {
+            minDx = dx;
+            nearest = p;
+          }
+        }
+        if (nearest) {
+          reviveY = clamp(nearest.gapY, game.player.radius + 6, GROUND_Y - game.player.radius - 12);
+        }
+      }
+
+      game.player.y = reviveY;
+      game.player.vy = -210;
+      game.player.angle = -0.3;
+      game.player.flapPulse = 1;
+      game.player.tapOsc = 1;
+
+      game.pipes = game.pipes.filter((p) => (p.x + p.w < game.player.x - 28) || (p.x > game.player.x + 56));
+      for (const p of game.pipes) {
+        if (p.x < game.player.x + 90 && p.x + p.w > game.player.x - 20) {
+          p.x += 140;
+        }
+      }
+
+      queueMicroReward('Revive Activated');
+      updateHud();
+      return true;
     }
 
     function saveBestIfNeeded() {
@@ -609,7 +1072,7 @@
       el.upgradeOverlay.setAttribute('aria-hidden', 'true');
     }
 
-    function triggerLevelUpgrade(milestone) {
+    function triggerLevelUpgrade(milestone, passInfo = null) {
       if (game.phase !== 'playing') return;
       if (game.upgradeMilestonesPlayed.includes(milestone)) return;
       game.pendingLevelUpgrade = milestone;
@@ -620,6 +1083,10 @@
       game.floorPulse = 1;
       game.shake = Math.max(game.shake, 4);
       playUpgradeSound();
+      addRunCoins(5, 'Tier Up');
+      if (passInfo && passInfo.clean) {
+        unlockAchievement('perfect_tier_upgrade', 'Clean pass on a tier upgrade');
+      }
     }
 
     function showGameOver() {
@@ -629,10 +1096,15 @@
       game.hitFlash = 0.95;
       game.shake = 7;
       saveBestIfNeeded();
+      const payout = commitRunRewards();
       const lvl = getLevelForScore(game.score);
       el.failScore.textContent = String(game.score);
       el.failLevel.textContent = lvl.label;
       el.failBest.textContent = String(game.best);
+      if (el.failMessage) {
+        const baseMsg = getFailMotivationText();
+        el.failMessage.textContent = payout > 0 ? `${baseMsg} Run coins earned: ${payout}.` : baseMsg;
+      }
       el.gameOverOverlay.classList.add('show');
       el.gameOverOverlay.setAttribute('aria-hidden', 'false');
       playFailMusic();
@@ -657,6 +1129,7 @@
 
     function showWin() {
       game.phase = 'win';
+      resetRetryStreak();
       game.inlineUpgradeSpriteActive = false;
       game.inlineUpgradeAwaitingTapSwap = false;
       game.hitFlash = 0.25;
@@ -666,18 +1139,36 @@
         el.upgradeMusic.pause();
         el.upgradeMusic.currentTime = 0;
       }
+      unlockAchievement('first_win', 'Cleared classic mode');
+      unlockScoreAchievements(game.score);
+      let endlessJustUnlocked = false;
+      if (isClassicMode(game.mode) && !app.meta.endlessUnlocked) {
+        app.meta.endlessUnlocked = true;
+        app.selectedMode = 'endless';
+        endlessJustUnlocked = true;
+        saveMeta();
+        updateHomeModeUi();
+        queueBadgeToast('Endless Unlocked', 'Endless is now your main mode', '∞');
+      }
+      const payout = commitRunRewards(12);
+      if (payout > 0) {
+        queueBadgeToast('Coins Earned', `+${payout} coins from this run`, 'C');
+      }
       spawnConfetti();
       const lvl = getLevelForScore(Math.min(game.score, SCORE_CAP));
       el.winScore.textContent = String(Math.min(game.score, SCORE_CAP));
       el.winLevel.textContent = lvl.label;
       el.winBest.textContent = String(game.best);
-      el.winSummary.textContent = `You cleared all ${SCORE_CAP} points. Winner banner, confetti, and mechanical gear overlays are active.`;
+      el.winSummary.textContent = endlessJustUnlocked
+        ? `You cleared ${SCORE_CAP}. Endless mode unlocked and set as main mode. Winner banner, confetti, and gears are active.`
+        : `You cleared all ${SCORE_CAP} points. Winner banner, confetti, and mechanical gear overlays are active.`;
       el.winOverlay.classList.add('show');
       el.winOverlay.setAttribute('aria-hidden', 'false');
     }
 
     function onCrash(cause = 'obstacle') {
       if (game.phase !== 'playing') return;
+      if (tryConsumeRevive(cause)) return;
       if (cause === 'obstacle') {
         game.phase = 'upgrading';
         game.hitFlash = 1;
@@ -695,30 +1186,72 @@
       showGameOver();
     }
 
-    function onPointScored() {
+    function applyScoreGain(passInfo = null) {
       if (game.phase !== 'playing') return;
       game.score += 1;
+      game.runCoinsEarned += 1;
       playScoreTick();
+      unlockScoreAchievements(game.score);
       updateHud();
       const milestone = getMilestoneForScore(game.score);
       if (milestone) {
-        triggerLevelUpgrade(milestone);
+        triggerLevelUpgrade(milestone, passInfo);
       }
-      if (game.score >= SCORE_CAP) {
+      if (isClassicMode(game.mode) && game.score >= SCORE_CAP) {
         game.score = SCORE_CAP;
         updateHud();
         showWin();
       }
     }
 
+    function onPointScored(passInfo = null) {
+      if (game.phase !== 'playing') return;
+
+      const wasComboHot = game.comboStreak >= 3;
+      const cleanPass = !!(passInfo && passInfo.clean);
+      let comboBonusScoreReady = false;
+      if (cleanPass) {
+        game.comboStreak += 1;
+        game.comboPulse = 1;
+        game.comboGlow = 1;
+        game.lastPassWasClean = true;
+        if (game.comboStreak >= 3) {
+          game.runCoinsEarned += 1;
+          const comboMult = 1 + Math.min(1.5, Math.floor(game.comboStreak / 3) * 0.25);
+          if (game.comboStreak === 3 || game.comboStreak === 6 || game.comboStreak % 10 === 0) {
+            queueMicroReward(`Combo x${comboMult.toFixed(2).replace(/\.00$/, '.0')}`);
+          }
+          if (game.comboStreak % 4 === 0) {
+            comboBonusScoreReady = true;
+          }
+        }
+      } else {
+        if (wasComboHot) {
+          queueMicroReward('Combo Broken');
+        }
+        game.comboStreak = 0;
+        game.lastPassWasClean = false;
+      }
+
+      applyScoreGain(passInfo);
+      if (comboBonusScoreReady && game.phase === 'playing') {
+        queueMicroReward('Combo Bonus +1');
+        applyScoreGain(passInfo);
+      }
+    }
+
     function update(dt) {
       const level = currentLevelConfig();
+      const tuning = getLevelTuning(game.score, game.mode);
       game.worldTime += dt;
       game.scrollX += game.currentSpeed * dt;
-      game.currentSpeed = lerp(game.currentSpeed, level.speed, clamp(dt * 2.2, 0, 1));
+      game.currentSpeed = lerp(game.currentSpeed, tuning.speed, clamp(dt * 2.2, 0, 1));
       game.hitFlash = Math.max(0, game.hitFlash - dt * 2.4);
       game.shake = Math.max(0, game.shake - dt * 12);
       game.floorPulse = Math.max(0, game.floorPulse - dt * 5.5);
+      game.comboPulse = Math.max(0, game.comboPulse - dt * 3.2);
+      game.comboGlow = Math.max(0, game.comboGlow - dt * 2.1);
+      game.reviveShieldTime = Math.max(0, game.reviveShieldTime - dt);
 
       for (const s of game.stars) {
         s.x -= s.speed * dt;
@@ -763,7 +1296,7 @@
 
         if (!pipe.scored && pipe.x + pipe.w < game.player.x - game.player.radius) {
           pipe.scored = true;
-          onPointScored();
+          onPointScored(getPipePassInfo(pipe));
           if (game.phase !== 'playing') break;
         }
       }
@@ -856,12 +1389,6 @@
         ctx.fillRect(-w / 2, -h / 2, w, h);
       }
       ctx.restore();
-
-      ctx.save();
-      ctx.globalAlpha = 0.12;
-      ctx.fillStyle = '#000';
-      ctx.fillRect(x + w - 10, y, 10, h);
-      ctx.restore();
     }
 
     function drawPipes() {
@@ -935,7 +1462,7 @@
         ctx.fillText(String(i), x - 12, y + 4);
       }
 
-      const markerY = top + height - (Math.min(game.score, SCORE_CAP) / SCORE_CAP) * height;
+      const markerY = top + height - (getDisplayProgressValue(game.score, game.mode) / SCORE_CAP) * height;
       ctx.fillStyle = '#7fffd2';
       ctx.beginPath();
       ctx.arc(x, markerY, 5, 0, Math.PI * 2);
@@ -945,13 +1472,15 @@
 
     function drawPlayer() {
       const level = currentLevelConfig();
+      const tuning = getLevelTuning(game.score, game.mode);
+      const cosmetic = getSelectedCosmetic();
       const visualSprite = (game.inlineUpgradeSpriteActive && UPGRADE_SEQUENCE.image) ? UPGRADE_SEQUENCE.image : level.sprite;
       const img = app.images[visualSprite];
       const p = game.player;
       const idleBob = Math.sin(game.worldTime * 7.2 + p.idlePhase) * (game.phase === 'playing' ? 2.8 : 5.0);
       const tapWave = Math.sin(game.worldTime * 16) * p.tapOsc * 6;
       const hover = idleBob + tapWave;
-      const drawH = (level.playerHeight + (game.inlineUpgradeSpriteActive ? 8 : 0)) + p.flapPulse * 5;
+      const drawH = (tuning.playerHeight + (game.inlineUpgradeSpriteActive ? 8 : 0)) + p.flapPulse * 5;
       const aspect = img ? (img.naturalWidth / img.naturalHeight) : 0.6;
       const drawW = drawH * aspect;
       p.radius = clamp(Math.min(drawW, drawH) * 0.17 + 8, 18, 29);
@@ -984,13 +1513,27 @@
 
       if (game.phase === 'playing') {
         ctx.save();
-        ctx.globalAlpha = 0.18 + p.flapPulse * 0.12;
-        ctx.strokeStyle = 'rgba(255,255,255,.7)';
-        ctx.lineWidth = 2;
+        const comboBoost = Math.min(1, game.comboGlow);
+        ctx.globalAlpha = 0.16 + p.flapPulse * 0.12 + comboBoost * 0.18;
+        ctx.strokeStyle = cosmetic.ring || 'rgba(255,255,255,.7)';
+        ctx.shadowBlur = comboBoost > 0 ? 18 : 0;
+        ctx.shadowColor = cosmetic.comboGlow || 'rgba(127,255,210,.22)';
+        ctx.lineWidth = 2 + comboBoost * 0.8;
         ctx.beginPath();
         ctx.arc(0, 0, p.radius + 10 + p.flapPulse * 12, 0, Math.PI * 2);
         ctx.stroke();
         ctx.restore();
+
+        if (game.reviveShieldTime > 0) {
+          ctx.save();
+          ctx.globalAlpha = 0.22 + Math.sin(game.worldTime * 18) * 0.08;
+          ctx.strokeStyle = 'rgba(147, 243, 255, .9)';
+          ctx.lineWidth = 3;
+          ctx.beginPath();
+          ctx.arc(0, 0, p.radius + 18, 0, Math.PI * 2);
+          ctx.stroke();
+          ctx.restore();
+        }
       }
 
       ctx.restore();
@@ -1009,11 +1552,17 @@
       roundRect(ctx, x, y, w, h, 12, false, true);
       ctx.fillStyle = '#ffffff';
       ctx.font = '800 14px system-ui, sans-serif';
-      ctx.fillText(level.name, x + 12, y + 19);
+      ctx.fillText(isEndlessMode() ? `${level.name} • E` : level.name, x + 12, y + 19);
       ctx.fillStyle = 'rgba(255,255,255,0.78)';
       ctx.font = '600 11px system-ui, sans-serif';
-      const minRange = level.maxScore === LEVELS[0].maxScore ? 0 : (LEVELS[LEVELS.indexOf(level) - 1].maxScore + 1);
-      ctx.fillText(`Points ${minRange}-${level.maxScore}`, x + 12, y + 34);
+      if (isEndlessMode()) {
+        const segStart = Math.floor(game.score / MILESTONE_EVERY) * MILESTONE_EVERY;
+        const segEnd = segStart + (MILESTONE_EVERY - 1);
+        ctx.fillText(`Tier ${segStart}-${segEnd}`, x + 12, y + 34);
+      } else {
+        const minRange = level.maxScore === LEVELS[0].maxScore ? 0 : (LEVELS[LEVELS.indexOf(level) - 1].maxScore + 1);
+        ctx.fillText(`Points ${minRange}-${level.maxScore}`, x + 12, y + 34);
+      }
       ctx.restore();
     }
 
@@ -1078,7 +1627,7 @@
       if (game.phase === 'playing') {
         flap();
       } else if (game.phase === 'gameover') {
-        restartGame();
+        recordRetryAndRestart();
       } else if (game.phase === 'win') {
         // Keep explicit buttons for win to avoid accidental restarts.
       } else if (game.phase === 'upgrading') {
@@ -1097,6 +1646,16 @@
       el.playBtn.addEventListener('click', () => {
         startGameFromHome();
       });
+      if (el.modeToggleBtn) {
+        el.modeToggleBtn.addEventListener('click', () => {
+          toggleModePreference();
+        });
+      }
+      if (el.cosmeticBtn) {
+        el.cosmeticBtn.addEventListener('click', () => {
+          handleCosmeticButton();
+        });
+      }
       el.homeMuteBtn.addEventListener('click', () => {
         resumeAudioContext();
         toggleMute();
@@ -1108,14 +1667,24 @@
       el.gameHomeBtn.addEventListener('click', () => {
         goHome();
       });
-      el.retryBtn.addEventListener('click', restartGame);
+      el.retryBtn.addEventListener('click', recordRetryAndRestart);
       el.failHomeBtn.addEventListener('click', goHome);
-      el.winRetryBtn.addEventListener('click', restartGame);
+      el.winRetryBtn.addEventListener('click', () => {
+        resetRetryStreak();
+        restartGame();
+      });
       el.winHomeBtn.addEventListener('click', goHome);
 
       el.canvas.addEventListener('pointerdown', (evt) => {
         evt.preventDefault();
         handleGameAction();
+      });
+
+      el.gameOverOverlay.addEventListener('pointerdown', (evt) => {
+        if (game.phase !== 'gameover') return;
+        if (evt.target.closest('button')) return;
+        evt.preventDefault();
+        recordRetryAndRestart();
       });
 
       window.addEventListener('keydown', (evt) => {
@@ -1156,20 +1725,46 @@
     }
 
     function showHomeAfterSplash() {
-      if (app.bootStage !== 'splash') return;
-      app.bootStage = 'home';
+      if (app.bootStage !== 'splash' || app.splashExiting) return;
       if (app.splashTimer) {
         clearTimeout(app.splashTimer);
         app.splashTimer = null;
       }
-      setScreen('home');
-      updateBestUI();
-      syncAudioButtons();
-      playHomeVideo();
+      app.splashExiting = true;
+
+      const prefersReducedMotion = !!(window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches);
+      const exitMs = prefersReducedMotion ? 90 : Math.max(0, Number(LAUNCH_SEQUENCE.exitDurationMs || 700));
+
+      if (el.splashScreen && exitMs > 0) {
+        el.splashScreen.classList.add('isExiting');
+      }
+
+      if (app.splashExitTimer) {
+        clearTimeout(app.splashExitTimer);
+      }
+
+      app.splashExitTimer = setTimeout(() => {
+        app.splashExitTimer = null;
+        app.splashExiting = false;
+        app.bootStage = 'home';
+        if (el.splashScreen) el.splashScreen.classList.remove('isExiting');
+        setScreen('home');
+        updateBestUI();
+        syncAudioButtons();
+        playHomeVideo();
+      }, exitMs);
     }
 
     function startSplashSequence() {
       app.bootStage = 'splash';
+      app.splashExiting = false;
+      if (app.splashExitTimer) {
+        clearTimeout(app.splashExitTimer);
+        app.splashExitTimer = null;
+      }
+      if (el.splashScreen) {
+        el.splashScreen.classList.remove('isExiting');
+      }
       setScreen('splash');
       if (el.splashTitle && LAUNCH_SEQUENCE.title) el.splashTitle.textContent = LAUNCH_SEQUENCE.title;
       if (el.splashSubtitle && LAUNCH_SEQUENCE.subtitle) el.splashSubtitle.textContent = LAUNCH_SEQUENCE.subtitle;
@@ -1184,10 +1779,12 @@
       if (app.splashTimer) clearTimeout(app.splashTimer);
       app.splashTimer = setTimeout(() => {
         showHomeAfterSplash();
-      }, LAUNCH_SEQUENCE.durationMs || 1000);
+      }, LAUNCH_SEQUENCE.durationMs || 2300);
     }
 
     function init() {
+      app.selectedMode = (app.meta.endlessUnlocked && app.meta.preferredMode === 'endless') ? 'endless' : 'classic';
+      game.mode = app.selectedMode;
       bindEvents();
       syncAudioButtons();
       applyStaticUiFromConfig();
@@ -1201,7 +1798,7 @@
         .then(() => {
           app.assetsReady = true;
           el.playBtn.disabled = false;
-          el.playBtn.textContent = 'Play';
+          updateHomeModeUi();
           if (el.assetStatus) el.assetStatus.textContent = 'Assets ready. 4 tiers active (0-10, 11-20, 21-30, 31-40).';
         })
         .catch((err) => {

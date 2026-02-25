@@ -14,7 +14,8 @@ window.FLAPPY_JESS_CONFIG = {
     lion: 'assets/team-lion.png',
     founderName: 'Dr Gnandeep Kodavali',
     founderPhoto: 'assets/founder.png',
-    durationMs: 1000
+    durationMs: 2300,
+    exitDurationMs: 760
   },
 
   upgradeSequence: {
