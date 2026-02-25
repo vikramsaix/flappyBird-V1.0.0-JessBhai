@@ -71,6 +71,7 @@ Vercel will serve `index.html`, `styles/`, `scripts/`, and `assets/` as static f
 - `assets/winner-display.png`
 - `assets/fail-sprite.webp`
 - `assets/fail-music.mp3`
+- `assets/revive-save.mp3` (one-time revive/save sound)
 - `assets/upgrade-level.mp3`
 - `assets/dl-logo.png`
 - `assets/team-lion.png`

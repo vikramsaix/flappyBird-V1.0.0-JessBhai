@@ -76,6 +76,7 @@
       assetStatus: document.getElementById('assetStatus'),
       failMusic: document.getElementById('failMusic'),
       upgradeMusic: document.getElementById('upgradeMusic'),
+      reviveSaveSfx: document.getElementById('reviveSaveSfx'),
       homeBgmCue: document.getElementById('homeBgmCue'),
       upgradeOverlay: document.getElementById('upgradeOverlay'),
       upgradeTitle: document.getElementById('upgradeTitle'),
@@ -125,12 +126,16 @@
       microToastTimer: null,
       bgmCueFadeRaf: 0,
       bgmCueHoldTimer: null,
-      upgradeTimer: null
+      upgradeTimer: null,
+      reviveSequenceTimer: null,
+      reviveStormCleanup: null,
+      reviveStormCleanupTimer: null,
+      audioLock: null
     };
 
     const game = {
       mode: 'classic',
-      phase: 'ready', // ready | playing | upgrading | gameover | win
+      phase: 'ready', // ready | playing | reviving | upgrading | gameover | win
       score: 0,
       best: Number(localStorage.getItem(STORAGE_KEY) || 0),
       worldTime: 0,
@@ -154,6 +159,9 @@
       reviveAvailable: true,
       reviveUsed: false,
       reviveShieldTime: 0,
+      healFxTime: 0,
+      healFxMax: 1.2,
+      healFxSeed: 0,
       bgmCueMilestonesPlayed: [],
       pendingLevelUpgrade: null,
       upgradeMilestonesPlayed: [],
@@ -549,6 +557,10 @@
         el.upgradeMusic.muted = app.muted;
         el.upgradeMusic.volume = 1;
       }
+      if (el.reviveSaveSfx) {
+        el.reviveSaveSfx.muted = app.muted;
+        el.reviveSaveSfx.volume = 1;
+      }
       if (el.homeBgmCue) {
         el.homeBgmCue.muted = app.muted;
       }
@@ -559,6 +571,11 @@
           el.upgradeMusic.pause();
           el.upgradeMusic.currentTime = 0;
         }
+        if (el.reviveSaveSfx) {
+          el.reviveSaveSfx.pause();
+          el.reviveSaveSfx.currentTime = 0;
+        }
+        stopReviveStormFx();
         stopHomeBgmCue(true);
       }
     }
@@ -593,6 +610,58 @@
       el.homeBgmCue.volume = 0;
     }
 
+    function stopReviveSaveSfx(resetTime = false) {
+      if (!el.reviveSaveSfx) return;
+      el.reviveSaveSfx.pause();
+      if (resetTime) {
+        try {
+          el.reviveSaveSfx.currentTime = 0;
+        } catch {}
+      }
+      el.reviveSaveSfx.volume = 1;
+    }
+
+    function stopReviveStormFx() {
+      if (app.reviveStormCleanupTimer) {
+        clearTimeout(app.reviveStormCleanupTimer);
+        app.reviveStormCleanupTimer = null;
+      }
+      if (!app.reviveStormCleanup) return;
+      const cleanup = app.reviveStormCleanup;
+      app.reviveStormCleanup = null;
+      try {
+        cleanup();
+      } catch {}
+    }
+
+    function stopReviveSequenceLock() {
+      if (app.reviveSequenceTimer) {
+        clearTimeout(app.reviveSequenceTimer);
+        app.reviveSequenceTimer = null;
+      }
+      stopReviveStormFx();
+      app.audioLock = null;
+    }
+
+    function scheduleReviveResumeAfter(ms) {
+      if (app.reviveSequenceTimer) {
+        clearTimeout(app.reviveSequenceTimer);
+        app.reviveSequenceTimer = null;
+      }
+      const delay = Math.max(0, Math.round(ms || 0));
+      app.reviveSequenceTimer = setTimeout(() => {
+        app.reviveSequenceTimer = null;
+        app.audioLock = null;
+        if (game.phase !== 'reviving') return;
+        game.phase = 'playing';
+        game.player.vy = -185;
+        game.player.flapPulse = Math.max(game.player.flapPulse, 0.85);
+        game.player.tapOsc = Math.max(game.player.tapOsc, 0.65);
+        game.player.angle = -0.26;
+        updateHud();
+      }, delay);
+    }
+
     function fadeAudioElement(audioEl, from, to, durationMs, onDone) {
       if (!audioEl) {
         if (onDone) onDone();
@@ -618,21 +687,26 @@
       app.bgmCueFadeRaf = requestAnimationFrame(step);
     }
 
-    function playScoreBgmCue() {
+    function playScoreBgmCue(options = {}) {
       if (app.muted || !el.homeBgmCue) return;
+      if (app.audioLock === 'revive' && !options.allowDuringReviveLock) return;
+      const peakVolume = clamp(Number.isFinite(options.peakVolume) ? options.peakVolume : 0.34, 0, 1);
+      const fadeInMs = Math.max(1, Number.isFinite(options.fadeInMs) ? options.fadeInMs : 900);
+      const holdMs = Math.max(0, Number.isFinite(options.holdMs) ? options.holdMs : 2100);
+      const fadeOutMs = Math.max(1, Number.isFinite(options.fadeOutMs) ? options.fadeOutMs : 1200);
       stopHomeBgmCue(true);
       el.homeBgmCue.loop = false;
       el.homeBgmCue.volume = 0;
       const p = el.homeBgmCue.play();
       if (p && typeof p.catch === 'function') p.catch(() => {});
-      fadeAudioElement(el.homeBgmCue, 0, 0.34, 900, () => {
+      fadeAudioElement(el.homeBgmCue, 0, peakVolume, fadeInMs, () => {
         if (app.bgmCueHoldTimer) clearTimeout(app.bgmCueHoldTimer);
         app.bgmCueHoldTimer = setTimeout(() => {
           app.bgmCueHoldTimer = null;
-          fadeAudioElement(el.homeBgmCue, el.homeBgmCue.volume || 0.34, 0, 1200, () => {
+          fadeAudioElement(el.homeBgmCue, el.homeBgmCue.volume || peakVolume, 0, fadeOutMs, () => {
             stopHomeBgmCue(true);
           });
-        }, 2100);
+        }, holdMs);
       });
     }
 
@@ -644,6 +718,136 @@
       if (game.bgmCueMilestonesPlayed.includes(key)) return;
       game.bgmCueMilestonesPlayed.push(key);
       playScoreBgmCue();
+    }
+
+    function playReviveSaveSound() {
+      if (app.muted || !el.reviveSaveSfx) return;
+      stopReviveSaveSfx(true);
+      el.reviveSaveSfx.volume = 1;
+      const p = el.reviveSaveSfx.play();
+      if (p && typeof p.catch === 'function') p.catch(() => {});
+    }
+
+    function playReviveStormFx() {
+      if (app.muted) return 0;
+      const ac = ensureAudioContext();
+      if (!ac || ac.state === 'suspended') return 0;
+      stopReviveStormFx();
+      const now = ac.currentTime;
+      const totalMs = 2600;
+      const endAt = now + totalMs / 1000;
+      const stormGains = [];
+      const stormSources = [];
+      const stormNodes = [];
+
+      // Low thunder rumble
+      const rumble = ac.createOscillator();
+      const rumbleGain = ac.createGain();
+      const rumbleLp = ac.createBiquadFilter();
+      rumble.type = 'sawtooth';
+      rumble.frequency.setValueAtTime(52, now);
+      rumble.frequency.exponentialRampToValueAtTime(31, now + 2.1);
+      rumbleLp.type = 'lowpass';
+      rumbleLp.frequency.value = 140;
+      rumbleGain.gain.setValueAtTime(0.0001, now);
+      rumbleGain.gain.exponentialRampToValueAtTime(0.06, now + 0.10);
+      rumbleGain.gain.linearRampToValueAtTime(0.045, now + 0.9);
+      rumbleGain.gain.exponentialRampToValueAtTime(0.0001, endAt);
+      rumble.connect(rumbleLp);
+      rumbleLp.connect(rumbleGain);
+      rumbleGain.connect(ac.destination);
+      stormSources.push(rumble);
+      stormGains.push(rumbleGain);
+      stormNodes.push(rumbleLp, rumbleGain);
+      rumble.start(now);
+      rumble.stop(endAt + 0.02);
+
+      // Filtered noise wash for storm/energy feel
+      const noiseBuf = ac.createBuffer(1, Math.ceil(ac.sampleRate * 2.7), ac.sampleRate);
+      const data = noiseBuf.getChannelData(0);
+      for (let i = 0; i < data.length; i += 1) {
+        data[i] = (Math.random() * 2 - 1) * (0.65 + Math.random() * 0.35);
+      }
+      const noise = ac.createBufferSource();
+      noise.buffer = noiseBuf;
+      const noiseBp = ac.createBiquadFilter();
+      noiseBp.type = 'bandpass';
+      noiseBp.frequency.setValueAtTime(420, now);
+      noiseBp.Q.value = 0.8;
+      const noiseGain = ac.createGain();
+      noiseGain.gain.setValueAtTime(0.0001, now);
+      noiseGain.gain.exponentialRampToValueAtTime(0.03, now + 0.12);
+      noiseGain.gain.linearRampToValueAtTime(0.024, now + 1.2);
+      noiseGain.gain.exponentialRampToValueAtTime(0.0001, endAt);
+      noise.connect(noiseBp);
+      noiseBp.connect(noiseGain);
+      noiseGain.connect(ac.destination);
+      stormSources.push(noise);
+      stormGains.push(noiseGain);
+      stormNodes.push(noiseBp, noiseGain);
+      noise.start(now);
+      noise.stop(endAt + 0.02);
+
+      // Two thunder cracks
+      [0.28, 1.18].forEach((offset, i) => {
+        const t = now + offset;
+        const crack = ac.createOscillator();
+        const crackGain = ac.createGain();
+        const crackHp = ac.createBiquadFilter();
+        crack.type = i === 0 ? 'triangle' : 'square';
+        crack.frequency.setValueAtTime(i === 0 ? 290 : 240, t);
+        crack.frequency.exponentialRampToValueAtTime(78, t + 0.22);
+        crackHp.type = 'highpass';
+        crackHp.frequency.value = 110;
+        crackGain.gain.setValueAtTime(0.0001, t);
+        crackGain.gain.exponentialRampToValueAtTime(0.11, t + 0.015);
+        crackGain.gain.exponentialRampToValueAtTime(0.0001, t + 0.34);
+        crack.connect(crackHp);
+        crackHp.connect(crackGain);
+        crackGain.connect(ac.destination);
+        stormSources.push(crack);
+        stormGains.push(crackGain);
+        stormNodes.push(crackHp, crackGain);
+        crack.start(t);
+        crack.stop(t + 0.36);
+      });
+
+      const cleanup = () => {
+        const t = ac.currentTime;
+        for (const gain of stormGains) {
+          if (!gain || !gain.gain) continue;
+          try {
+            gain.gain.cancelScheduledValues(t);
+            gain.gain.setValueAtTime(Math.max(0.0001, gain.gain.value || 0.0001), t);
+            gain.gain.exponentialRampToValueAtTime(0.0001, t + 0.08);
+          } catch {}
+        }
+        for (const src of stormSources) {
+          if (!src) continue;
+          try {
+            src.stop(t + 0.09);
+          } catch {}
+        }
+        setTimeout(() => {
+          for (const src of stormSources) {
+            try { src.disconnect(); } catch {}
+          }
+          for (const node of stormNodes) {
+            try { node.disconnect(); } catch {}
+          }
+        }, 140);
+      };
+
+      app.reviveStormCleanup = cleanup;
+      if (app.reviveStormCleanupTimer) clearTimeout(app.reviveStormCleanupTimer);
+      app.reviveStormCleanupTimer = setTimeout(() => {
+        if (app.reviveStormCleanup === cleanup) {
+          app.reviveStormCleanup = null;
+        }
+        app.reviveStormCleanupTimer = null;
+      }, totalMs + 240);
+
+      return totalMs;
     }
 
     function queueMicroReward(text) {
@@ -754,7 +958,7 @@
 
     // "Classic" flap pop inspired by old arcade jump sounds (procedural, no external file needed).
     function playTapSfx() {
-      if (app.muted) return;
+      if (app.muted || app.audioLock === 'revive') return;
       const ac = ensureAudioContext();
       if (!ac) return;
       if (ac.state === 'suspended') return;
@@ -790,7 +994,7 @@
     }
 
     function playScoreTick() {
-      if (app.muted) return;
+      if (app.muted || app.audioLock === 'revive') return;
       const ac = ensureAudioContext();
       if (!ac || ac.state === 'suspended') return;
       const now = ac.currentTime;
@@ -809,7 +1013,7 @@
     }
 
     function playLaunchSparkle() {
-      if (app.muted) return;
+      if (app.muted || app.audioLock === 'revive') return;
       const ac = ensureAudioContext();
       if (!ac || ac.state === 'suspended') return;
       const now = ac.currentTime;
@@ -829,7 +1033,7 @@
     }
 
     function playUpgradeSound() {
-      if (app.muted || !el.upgradeMusic) return;
+      if (app.muted || app.audioLock === 'revive' || !el.upgradeMusic) return;
       el.upgradeMusic.pause();
       el.upgradeMusic.currentTime = 0;
       const p = el.upgradeMusic.play();
@@ -927,6 +1131,9 @@
       game.reviveAvailable = true;
       game.reviveUsed = false;
       game.reviveShieldTime = 0;
+      game.healFxTime = 0;
+      game.healFxMax = 1.2;
+      game.healFxSeed = 0;
       game.bgmCueMilestonesPlayed = [];
       game.pendingLevelUpgrade = null;
       game.upgradeMilestonesPlayed = [];
@@ -951,6 +1158,8 @@
         el.upgradeMusic.pause();
         el.upgradeMusic.currentTime = 0;
       }
+      stopReviveSequenceLock();
+      stopReviveSaveSfx(true);
       if (el.microRewardToast) {
         el.microRewardToast.classList.remove('show');
         el.microRewardToast.textContent = '';
@@ -970,6 +1179,8 @@
         el.upgradeMusic.pause();
         el.upgradeMusic.currentTime = 0;
       }
+      stopReviveSequenceLock();
+      stopReviveSaveSfx(true);
       hideAllOverlays();
       setTapPrompt(true);
       resetRetryStreak();
@@ -1157,7 +1368,8 @@
       game.reviveAvailable = false;
       game.reviveUsed = true;
       game.reviveShieldTime = 1.05;
-      game.phase = 'playing';
+      game.phase = 'reviving';
+      app.audioLock = 'revive';
       game.hitFlash = Math.max(game.hitFlash, 0.55);
       game.shake = Math.max(game.shake, 5);
       game.floorPulse = 1;
@@ -1179,10 +1391,13 @@
       }
 
       game.player.y = reviveY;
-      game.player.vy = -210;
+      game.player.vy = 0;
       game.player.angle = -0.3;
       game.player.flapPulse = 1;
       game.player.tapOsc = 1;
+      game.healFxMax = 1.25;
+      game.healFxTime = game.healFxMax;
+      game.healFxSeed = Math.random() * Math.PI * 2;
 
       game.pipes = game.pipes.filter((p) => (p.x + p.w < game.player.x - 28) || (p.x > game.player.x + 56));
       for (const p of game.pipes) {
@@ -1191,6 +1406,23 @@
         }
       }
 
+      stopFailMusic();
+      if (el.upgradeMusic) {
+        el.upgradeMusic.pause();
+        el.upgradeMusic.currentTime = 0;
+      }
+      stopHomeBgmCue(true);
+
+      const bgmCueOptions = { peakVolume: 0.6, fadeInMs: 520, holdMs: 1150, fadeOutMs: 900, allowDuringReviveLock: true };
+      const bgmCueMs = bgmCueOptions.fadeInMs + bgmCueOptions.holdMs + bgmCueOptions.fadeOutMs;
+      const reviveAudioMs = (el.reviveSaveSfx && Number.isFinite(el.reviveSaveSfx.duration) && el.reviveSaveSfx.duration > 0)
+        ? Math.round(el.reviveSaveSfx.duration * 1000)
+        : 2400;
+      playReviveSaveSound();
+      // Pair the revive moment with the same score-triggered cue, but louder (60%) for impact.
+      playScoreBgmCue(bgmCueOptions);
+      const stormMs = playReviveStormFx();
+      scheduleReviveResumeAfter(Math.max(bgmCueMs, reviveAudioMs, stormMs, 1800) + 60);
       queueMicroReward('Revive Activated');
       updateHud();
       return true;
@@ -1212,7 +1444,7 @@
 
     function playFailMusic() {
       stopFailMusic();
-      if (app.muted) return;
+      if (app.muted || app.audioLock === 'revive') return;
       const p = el.failMusic.play();
       if (p && typeof p.catch === 'function') p.catch(() => {});
     }
@@ -1284,6 +1516,8 @@
       game.hitFlash = 0.95;
       game.shake = 7;
       stopHomeBgmCue(true);
+      stopReviveSequenceLock();
+      stopReviveSaveSfx(true);
       saveBestIfNeeded();
       const payout = commitRunRewards();
       const lvl = getLevelForScore(game.score);
@@ -1325,6 +1559,8 @@
       saveBestIfNeeded();
       stopFailMusic();
       stopHomeBgmCue(true);
+      stopReviveSequenceLock();
+      stopReviveSaveSfx(true);
       if (el.upgradeMusic) {
         el.upgradeMusic.pause();
         el.upgradeMusic.currentTime = 0;
@@ -1434,21 +1670,29 @@
     function update(dt) {
       const level = currentLevelConfig();
       const tuning = getLevelTuning(game.score, game.mode);
+      const freezeForRevive = game.phase === 'reviving';
       game.worldTime += dt;
-      game.scrollX += game.currentSpeed * dt;
-      game.currentSpeed = lerp(game.currentSpeed, tuning.speed, clamp(dt * 2.2, 0, 1));
+      if (!freezeForRevive) {
+        game.scrollX += game.currentSpeed * dt;
+        game.currentSpeed = lerp(game.currentSpeed, tuning.speed, clamp(dt * 2.2, 0, 1));
+      }
       game.hitFlash = Math.max(0, game.hitFlash - dt * 2.4);
       game.shake = Math.max(0, game.shake - dt * 12);
       game.floorPulse = Math.max(0, game.floorPulse - dt * 5.5);
       game.comboPulse = Math.max(0, game.comboPulse - dt * 3.2);
       game.comboGlow = Math.max(0, game.comboGlow - dt * 2.1);
-      game.reviveShieldTime = Math.max(0, game.reviveShieldTime - dt);
+      if (!freezeForRevive) {
+        game.reviveShieldTime = Math.max(0, game.reviveShieldTime - dt);
+      }
+      game.healFxTime = Math.max(0, game.healFxTime - dt);
 
-      for (const s of game.stars) {
-        s.x -= s.speed * dt;
-        if (s.x < -8) {
-          s.x = W + rand(0, 30);
-          s.y = rand(10, GROUND_Y - 24);
+      if (!freezeForRevive) {
+        for (const s of game.stars) {
+          s.x -= s.speed * dt;
+          if (s.x < -8) {
+            s.x = W + rand(0, 30);
+            s.y = rand(10, GROUND_Y - 24);
+          }
         }
       }
 
@@ -1463,6 +1707,10 @@
         } else if (game.phase === 'upgrading') {
           game.player.idlePhase += dt * 5.0;
           game.player.angle = Math.sin(game.worldTime * 8.0) * 0.14;
+        } else if (game.phase === 'reviving') {
+          game.player.idlePhase += dt * 4.8;
+          game.player.vy = 0;
+          game.player.angle = Math.sin(game.worldTime * 7.2 + game.healFxSeed) * 0.08;
         }
         game.player.flapPulse = Math.max(0, game.player.flapPulse - dt * 3.8);
         game.player.tapOsc = Math.max(0, game.player.tapOsc - dt * 4.2);
@@ -1777,7 +2025,66 @@
         ctx.fillRect(-20, -40, 40, 80);
       }
 
-      if (game.phase === 'playing') {
+      if (game.phase === 'playing' || game.phase === 'reviving') {
+        if (game.healFxTime > 0) {
+          const healNorm = clamp(game.healFxTime / Math.max(0.1, game.healFxMax || 1.2), 0, 1);
+          const bloom = 1 - healNorm;
+          const seed = game.healFxSeed || 0;
+
+          ctx.save();
+          ctx.globalCompositeOperation = 'screen';
+
+          const haloR = p.radius + 18 + bloom * 24 + Math.sin(game.worldTime * 24 + seed) * 2;
+          const healGrad = ctx.createRadialGradient(0, 0, p.radius * 0.35, 0, 0, haloR);
+          healGrad.addColorStop(0, `rgba(196, 255, 231, ${(0.24 * healNorm).toFixed(3)})`);
+          healGrad.addColorStop(0.52, `rgba(109, 255, 204, ${(0.20 * healNorm).toFixed(3)})`);
+          healGrad.addColorStop(1, 'rgba(109,255,204,0)');
+          ctx.fillStyle = healGrad;
+          ctx.beginPath();
+          ctx.arc(0, 0, haloR, 0, Math.PI * 2);
+          ctx.fill();
+
+          ctx.lineCap = 'round';
+          for (let i = 0; i < 3; i += 1) {
+            const arcR = p.radius + 12 + i * 6 + bloom * 8;
+            const rot = game.worldTime * (2.2 + i * 0.45) + seed + i * 2.1;
+            ctx.save();
+            ctx.rotate(rot);
+            ctx.globalAlpha = 0.16 + healNorm * 0.22 - i * 0.03;
+            ctx.strokeStyle = i === 0 ? '#c7ffe8' : (i === 1 ? '#78ffd6' : '#4fd9ff');
+            ctx.lineWidth = 2.5 - i * 0.35;
+            ctx.beginPath();
+            ctx.arc(0, 0, arcR, -0.9, 0.9);
+            ctx.stroke();
+            ctx.restore();
+          }
+
+          // Floating spark crosses/dots for a "healing" feel.
+          for (let i = 0; i < 6; i += 1) {
+            const a = seed + i * (Math.PI * 2 / 6) + game.worldTime * (1.8 + i * 0.12);
+            const radial = p.radius + 8 + i * 2 + bloom * (10 + i * 1.2);
+            const lift = bloom * 18;
+            const sx = Math.cos(a) * radial;
+            const sy = Math.sin(a) * radial - lift;
+            const s = 2.8 + (i % 2) * 1.1;
+            ctx.globalAlpha = Math.max(0, 0.12 + healNorm * 0.42 - i * 0.035);
+            ctx.strokeStyle = i % 2 ? '#baffef' : '#8ef0ff';
+            ctx.lineWidth = 1.8;
+            ctx.beginPath();
+            ctx.moveTo(sx - s, sy);
+            ctx.lineTo(sx + s, sy);
+            ctx.moveTo(sx, sy - s);
+            ctx.lineTo(sx, sy + s);
+            ctx.stroke();
+            ctx.beginPath();
+            ctx.fillStyle = '#edfffb';
+            ctx.arc(sx, sy, 0.9, 0, Math.PI * 2);
+            ctx.fill();
+          }
+
+          ctx.restore();
+        }
+
         ctx.save();
         const comboBoost = Math.min(1, game.comboGlow);
         ctx.globalAlpha = 0.16 + p.flapPulse * 0.12 + comboBoost * 0.18;
@@ -1891,6 +2198,8 @@
       if (app.screen !== 'game') return;
       if (game.phase === 'playing') {
         flap();
+      } else if (game.phase === 'reviving') {
+        // Freeze input until the revive audio + heal sequence completes.
       } else if (game.phase === 'gameover') {
         recordRetryAndRestart();
       } else if (game.phase === 'win') {
@@ -1982,7 +2291,9 @@
         if (document.hidden) {
           el.failMusic.pause();
           if (el.upgradeMusic) el.upgradeMusic.pause();
+          if (el.reviveSaveSfx) el.reviveSaveSfx.pause();
           if (el.homeBgmCue) el.homeBgmCue.pause();
+          stopReviveStormFx();
           if (app.screen === 'home') el.homeVideo.pause();
         } else if (app.screen === 'home') {
           playHomeVideo();
