@@ -8,7 +8,63 @@
 </head>
 <body>
   <div class="app">
-    <section id="homeScreen" class="screen active" aria-label="Home screen">
+    <section id="splashScreen" class="screen active splashScreen" aria-label="DL Developers launch transmission">
+      <div class="splashBg"></div>
+      <div class="splashGrid"></div>
+      <div class="splashPortfolio">
+        <div class="splashBrowser">
+          <div class="splashBrowserBar">
+            <div class="splashDots"><span></span><span></span><span></span></div>
+            <div class="splashUrl">www.dldevelopers.studio</div>
+            <div class="splashTag">LIVE</div>
+          </div>
+
+          <div class="splashPortfolioBody">
+            <div class="splashNav">
+              <div class="splashBrandMark">
+                <img id="splashLogo" class="splashLogoInline" src="assets/dl-logo.png" alt="DL Developers logo" />
+                <div>
+                  <h1 id="splashTitle">DL Developers</h1>
+                  <p id="splashSubtitle">Transmission Initializing</p>
+                </div>
+              </div>
+              <div class="splashNavLinks">
+                <span>Studio</span>
+                <span>Products</span>
+                <span>Labs</span>
+                <span>Contact</span>
+              </div>
+            </div>
+
+            <div class="splashHero">
+              <div class="splashHeroCopy">
+                <p class="splashEyebrow">Product Engineering Studio</p>
+                <h2>Shipping playful web experiences with polished interaction systems.</h2>
+                <p class="splashLead">Frontend products, game interfaces, and media-heavy web builds designed for speed, clarity, and launch-readiness.</p>
+                <div class="splashStats">
+                  <div><b>24+</b><span>Projects</span></div>
+                  <div><b>12</b><span>Ship Sprints</span></div>
+                  <div><b>99%</b><span>Static Deploys</span></div>
+                </div>
+              </div>
+
+              <div class="splashFounderCard">
+                <div class="splashFounderHeader">Founder</div>
+                <img id="splashFounderPhoto" class="splashFounderPhoto" src="assets/founder.png" alt="Founder portrait" />
+                <div class="splashFounderMeta">
+                  <h3 id="splashFounderName">Dr Gnandeep Kodavali</h3>
+                  <p>Founder • DL Developers</p>
+                </div>
+                <img id="splashLion" class="splashLionBadge" src="assets/team-lion.png" alt="DL lion emblem" />
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <button id="skipSplashBtn" class="miniBtn splashSkipBtn" type="button">Skip Intro</button>
+    </section>
+
+    <section id="homeScreen" class="screen" aria-label="Home screen">
       <div class="homeStage">
         <video id="homeVideo" class="homeVideo" src="assets/home-video.mp4" playsinline loop preload="auto"></video>
         <div class="homeVignette"></div>
@@ -16,7 +72,16 @@
         <div class="homeChrome">
           <div class="brand">
             <h1 class="brandTitle">FLAPPY <span class="mutedWord">JESS</span></h1>
-            <p class="brandSub">20 points to win • 4 levels • asset edition</p>
+            <p id="brandSub" class="brandSub">40 points to win • sprite swap every 10 • DL developers edition</p>
+          </div>
+
+          <div class="homeFounderStrip" aria-label="Founder">
+            <img id="homeFounderPhoto" class="homeFounderPhoto" src="assets/founder.png" alt="Dr Gnandeep Kodavali portrait" />
+            <div class="homeFounderCopy">
+              <span class="homeFounderLabel">Founder</span>
+              <strong id="homeFounderName">Dr Gnandeep Kodavali</strong>
+            </div>
+            <img class="homeFounderLogo" src="assets/dl-logo.png" alt="DL logo" />
           </div>
 
           <div class="homePanel" role="group" aria-label="Game controls">
@@ -27,7 +92,7 @@
               </div>
               <div class="statCard">
                 <span class="statLabel">Goal</span>
-                <span class="statValue">20</span>
+                <span id="goalValue" class="statValue">40</span>
               </div>
             </div>
 
@@ -57,7 +122,7 @@
               <button id="gameHomeBtn" class="miniBtn" type="button">Home</button>
             </div>
           </div>
-          <div class="progressBar" aria-label="Progress to 20 points">
+          <div class="progressBar" aria-label="Progress to 40 points">
             <div id="progressFill" class="progressFill"></div>
           </div>
         </div>
@@ -97,7 +162,7 @@
             </div>
             <div class="winBanner">Winner</div>
 
-            <h2 class="overlayTitle">20 / 20 Cleared</h2>
+            <h2 class="overlayTitle">40 / 40 Cleared</h2>
             <p class="winnerText" id="winSummary">Victory unlocked. Confetti + gear overlay active.</p>
 
             <div class="overlayImgWrap">
@@ -105,9 +170,9 @@
             </div>
 
             <div class="overlayStats">
-              <div class="overlayStat"><span class="k">Score</span><span id="winScore" class="v">20</span></div>
+              <div class="overlayStat"><span class="k">Score</span><span id="winScore" class="v">40</span></div>
               <div class="overlayStat"><span class="k">Level</span><span id="winLevel" class="v">4</span></div>
-              <div class="overlayStat"><span class="k">Best</span><span id="winBest" class="v">20</span></div>
+              <div class="overlayStat"><span class="k">Best</span><span id="winBest" class="v">40</span></div>
             </div>
 
             <div class="overlayActions">
@@ -121,6 +186,7 @@
   </div>
 
   <audio id="failMusic" src="assets/fail-music.mp3" preload="auto"></audio>
+  <audio id="upgradeMusic" src="assets/upgrade-level.mp3" preload="auto"></audio>
 
   <script src="scripts/config.js"></script>
   <script src="scripts/main.js"></script>

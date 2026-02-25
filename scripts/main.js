@@ -10,8 +10,19 @@
     const SCORE_CAP = CONFIG.scoreCap;
     const STORAGE_KEY = CONFIG.storageKey;
     const LEVELS = CONFIG.levels;
+    const MILESTONE_EVERY = CONFIG.milestoneEvery || 10;
+    const LAUNCH_SEQUENCE = CONFIG.launchSequence || {};
+    const UPGRADE_SEQUENCE = CONFIG.upgradeSequence || {};
 
     const el = {
+      splashScreen: document.getElementById('splashScreen'),
+      splashTitle: document.getElementById('splashTitle'),
+      splashSubtitle: document.getElementById('splashSubtitle'),
+      splashLogo: document.getElementById('splashLogo'),
+      splashLion: document.getElementById('splashLion'),
+      splashFounderName: document.getElementById('splashFounderName'),
+      splashFounderPhoto: document.getElementById('splashFounderPhoto'),
+      skipSplashBtn: document.getElementById('skipSplashBtn'),
       homeScreen: document.getElementById('homeScreen'),
       gameScreen: document.getElementById('gameScreen'),
       homeVideo: document.getElementById('homeVideo'),
@@ -20,6 +31,10 @@
       gameMuteBtn: document.getElementById('gameMuteBtn'),
       gameHomeBtn: document.getElementById('gameHomeBtn'),
       homeHighScore: document.getElementById('homeHighScore'),
+      homeFounderName: document.getElementById('homeFounderName'),
+      homeFounderPhoto: document.getElementById('homeFounderPhoto'),
+      goalValue: document.getElementById('goalValue'),
+      brandSub: document.getElementById('brandSub'),
       hudScore: document.getElementById('hudScore'),
       hudLevel: document.getElementById('hudLevel'),
       hudBest: document.getElementById('hudBest'),
@@ -28,6 +43,11 @@
       canvas: document.getElementById('gameCanvas'),
       assetStatus: document.getElementById('assetStatus'),
       failMusic: document.getElementById('failMusic'),
+      upgradeMusic: document.getElementById('upgradeMusic'),
+      upgradeOverlay: document.getElementById('upgradeOverlay'),
+      upgradeTitle: document.getElementById('upgradeTitle'),
+      upgradeSub: document.getElementById('upgradeSub'),
+      upgradeSpriteImg: document.getElementById('upgradeSpriteImg'),
       gameOverOverlay: document.getElementById('gameOverOverlay'),
       winOverlay: document.getElementById('winOverlay'),
       retryBtn: document.getElementById('retryBtn'),
@@ -47,6 +67,7 @@
     const ctx = el.canvas.getContext('2d');
 
     const app = {
+      bootStage: 'splash', // splash | home | game
       screen: 'home',
       muted: false,
       homeVideoForcedMuted: false,
@@ -54,11 +75,13 @@
       assetsReady: false,
       images: {},
       raf: 0,
-      triedAutoplay: false
+      triedAutoplay: false,
+      splashTimer: null,
+      upgradeTimer: null
     };
 
     const game = {
-      phase: 'ready', // ready | playing | gameover | win
+      phase: 'ready', // ready | playing | upgrading | gameover | win
       score: 0,
       best: Number(localStorage.getItem(STORAGE_KEY) || 0),
       worldTime: 0,
@@ -72,6 +95,12 @@
       hitFlash: 0,
       shake: 0,
       floorPulse: 0,
+      pendingLevelUpgrade: null,
+      upgradeMilestonesPlayed: [],
+      inlineUpgradeSpriteActive: false,
+      inlineUpgradeAwaitingTapSwap: false,
+      collisionBlastQueued: false,
+      blastCenter: { x: 0, y: 0 },
       player: {
         x: 116,
         y: H * 0.48,
@@ -109,11 +138,16 @@
 
     function setScreen(name) {
       app.screen = name;
+      if (el.splashScreen) el.splashScreen.classList.toggle('active', name === 'splash');
       el.homeScreen.classList.toggle('active', name === 'home');
       el.gameScreen.classList.toggle('active', name === 'game');
     }
 
     function hideAllOverlays() {
+      if (el.upgradeOverlay) {
+        el.upgradeOverlay.classList.remove('show', 'flashOverlay');
+        el.upgradeOverlay.setAttribute('aria-hidden', 'true');
+      }
       el.gameOverOverlay.classList.remove('show');
       el.winOverlay.classList.remove('show');
       el.gameOverOverlay.setAttribute('aria-hidden', 'true');
@@ -137,6 +171,23 @@
       el.progressFill.style.width = `${(Math.min(game.score, SCORE_CAP) / SCORE_CAP) * 100}%`;
     }
 
+    function applyStaticUiFromConfig() {
+      if (el.goalValue) el.goalValue.textContent = String(SCORE_CAP);
+      if (el.brandSub) {
+        el.brandSub.textContent = `${SCORE_CAP} points to win • sprite swap every ${MILESTONE_EVERY} • DL developers edition`;
+      }
+      if (el.splashFounderName && LAUNCH_SEQUENCE.founderName) {
+        el.splashFounderName.textContent = LAUNCH_SEQUENCE.founderName;
+      }
+      if (el.homeFounderName && LAUNCH_SEQUENCE.founderName) {
+        el.homeFounderName.textContent = LAUNCH_SEQUENCE.founderName;
+      }
+      if (LAUNCH_SEQUENCE.founderPhoto) {
+        if (el.splashFounderPhoto) el.splashFounderPhoto.src = LAUNCH_SEQUENCE.founderPhoto;
+        if (el.homeFounderPhoto) el.homeFounderPhoto.src = LAUNCH_SEQUENCE.founderPhoto;
+      }
+    }
+
     function syncAudioButtons() {
       const homeVideoMuted = app.muted || app.homeVideoForcedMuted;
       el.homeMuteBtn.textContent = app.muted ? 'Sound: Off' : (app.homeVideoForcedMuted ? 'Sound: Tap' : 'Sound: On');
@@ -145,9 +196,17 @@
       el.homeVideo.volume = 1;
       el.failMusic.muted = app.muted;
       el.failMusic.volume = 1;
+      if (el.upgradeMusic) {
+        el.upgradeMusic.muted = app.muted;
+        el.upgradeMusic.volume = 1;
+      }
       if (app.muted) {
         el.failMusic.pause();
         el.failMusic.currentTime = 0;
+        if (el.upgradeMusic) {
+          el.upgradeMusic.pause();
+          el.upgradeMusic.currentTime = 0;
+        }
       }
     }
 
@@ -240,6 +299,34 @@
       osc.stop(now + 0.11);
     }
 
+    function playLaunchSparkle() {
+      if (app.muted) return;
+      const ac = ensureAudioContext();
+      if (!ac || ac.state === 'suspended') return;
+      const now = ac.currentTime;
+      [1046, 1318, 1567].forEach((f, i) => {
+        const osc = ac.createOscillator();
+        const gain = ac.createGain();
+        osc.type = i % 2 ? 'triangle' : 'sine';
+        osc.frequency.setValueAtTime(f, now + i * 0.04);
+        gain.gain.setValueAtTime(0.0001, now + i * 0.04);
+        gain.gain.exponentialRampToValueAtTime(0.06, now + i * 0.04 + 0.01);
+        gain.gain.exponentialRampToValueAtTime(0.0001, now + i * 0.04 + 0.14);
+        osc.connect(gain);
+        gain.connect(ac.destination);
+        osc.start(now + i * 0.04);
+        osc.stop(now + i * 0.04 + 0.16);
+      });
+    }
+
+    function playUpgradeSound() {
+      if (app.muted || !el.upgradeMusic) return;
+      el.upgradeMusic.pause();
+      el.upgradeMusic.currentTime = 0;
+      const p = el.upgradeMusic.play();
+      if (p && typeof p.catch === 'function') p.catch(() => {});
+    }
+
     function playHomeVideo(userGesture = false) {
       if (app.screen !== 'home') return;
       if (userGesture && !app.muted) {
@@ -267,10 +354,14 @@
         'assets/level-1.png',
         'assets/level-2.png',
         'assets/level-3.png',
-        'assets/level-4.png'
+        'assets/level-4.png',
+        LAUNCH_SEQUENCE.logo || 'assets/dl-logo.png',
+        LAUNCH_SEQUENCE.lion || 'assets/team-lion.png',
+        LAUNCH_SEQUENCE.founderPhoto || 'assets/founder.png',
+        UPGRADE_SEQUENCE.image || 'assets/level10-upgrade.png'
       ];
 
-      const jobs = sources.map((src) => new Promise((resolve, reject) => {
+      const jobs = [...new Set(sources.filter(Boolean))].map((src) => new Promise((resolve, reject) => {
         const img = new Image();
         img.onload = () => resolve({ src, img });
         img.onerror = () => reject(new Error(`Failed to load ${src}`));
@@ -317,6 +408,11 @@
       game.hitFlash = 0;
       game.shake = 0;
       game.floorPulse = 0;
+      game.pendingLevelUpgrade = null;
+      game.upgradeMilestonesPlayed = [];
+      game.inlineUpgradeSpriteActive = false;
+      game.inlineUpgradeAwaitingTapSwap = false;
+      game.collisionBlastQueued = false;
       game.player.x = 116;
       game.player.y = H * 0.48;
       game.player.vy = -200;
@@ -330,11 +426,24 @@
       setTapPrompt(false);
       hideAllOverlays();
       stopFailMusic();
+      if (el.upgradeMusic) {
+        el.upgradeMusic.pause();
+        el.upgradeMusic.currentTime = 0;
+      }
       updateHud();
     }
 
     function goHome() {
+      app.bootStage = 'home';
+      if (app.splashTimer) {
+        clearTimeout(app.splashTimer);
+        app.splashTimer = null;
+      }
       stopFailMusic();
+      if (el.upgradeMusic) {
+        el.upgradeMusic.pause();
+        el.upgradeMusic.currentTime = 0;
+      }
       hideAllOverlays();
       setTapPrompt(true);
       setScreen('home');
@@ -344,6 +453,7 @@
 
     function startGameFromHome() {
       if (!app.assetsReady) return;
+      app.bootStage = 'game';
       tryLockPortrait();
       resumeAudioContext();
       setScreen('game');
@@ -353,6 +463,7 @@
     }
 
     function restartGame() {
+      app.bootStage = 'game';
       tryLockPortrait();
       resumeAudioContext();
       setScreen('game');
@@ -362,6 +473,17 @@
 
     function currentLevelConfig() {
       return getLevelForScore(game.score);
+    }
+
+    function levelIndexForScore(score) {
+      return LEVELS.indexOf(getLevelForScore(score));
+    }
+
+    function getMilestoneForScore(score) {
+      if (score <= 0) return null;
+      if (score % MILESTONE_EVERY !== 0) return null;
+      if (score >= SCORE_CAP) return null;
+      return score;
     }
 
     function spawnPipe() {
@@ -383,6 +505,11 @@
 
     function flap() {
       if (game.phase !== 'playing') return;
+      if (game.inlineUpgradeAwaitingTapSwap) {
+        game.inlineUpgradeAwaitingTapSwap = false;
+        game.inlineUpgradeSpriteActive = false;
+        game.pendingLevelUpgrade = null;
+      }
       game.player.vy = -305;
       game.player.flapPulse = 1;
       game.player.tapOsc = 1;
@@ -440,8 +567,65 @@
       if (p && typeof p.catch === 'function') p.catch(() => {});
     }
 
+    function createPopcornBlast(x, y) {
+      const host = el.gameScreen || document.body;
+      if (!host) return;
+      const frameRect = el.canvas.getBoundingClientRect();
+      const px = frameRect.left + (x / W) * frameRect.width;
+      const py = frameRect.top + (y / H) * frameRect.height;
+      const colors = ['#fff6c2', '#ffd166', '#ff8f5c', '#ff5f7a', '#ffe8a3'];
+
+      for (let i = 0; i < 34; i++) {
+        const piece = document.createElement('span');
+        piece.className = 'blastPiece';
+        piece.style.left = `${px}px`;
+        piece.style.top = `${py}px`;
+        const angle = rand(0, Math.PI * 2);
+        const dist = rand(26, 120);
+        piece.style.setProperty('--tx', `${Math.cos(angle) * dist}px`);
+        piece.style.setProperty('--ty', `${Math.sin(angle) * dist}px`);
+        piece.style.setProperty('--dur', `${Math.round(rand(450, 900))}ms`);
+        piece.style.background = `radial-gradient(circle, rgba(255,255,255,.95), ${colors[i % colors.length]} 42%, rgba(255,89,89,.18))`;
+        host.appendChild(piece);
+        piece.addEventListener('animationend', () => piece.remove(), { once: true });
+      }
+    }
+
+    function showUpgradeOverlay(milestone) {
+      if (!el.upgradeOverlay) return;
+      const nextLevel = getLevelForScore(Math.min(milestone + 1, SCORE_CAP));
+      el.upgradeTitle.textContent = `Level ${milestone} Upgrade`;
+      el.upgradeSub.textContent = `Power-up animation playing. Next sprite: ${nextLevel.name}.`;
+      if (el.upgradeSpriteImg && UPGRADE_SEQUENCE.image) {
+        el.upgradeSpriteImg.src = UPGRADE_SEQUENCE.image;
+      }
+      el.upgradeOverlay.classList.add('show', 'flashOverlay');
+      el.upgradeOverlay.setAttribute('aria-hidden', 'false');
+    }
+
+    function hideUpgradeOverlay() {
+      if (!el.upgradeOverlay) return;
+      el.upgradeOverlay.classList.remove('show', 'flashOverlay');
+      el.upgradeOverlay.setAttribute('aria-hidden', 'true');
+    }
+
+    function triggerLevelUpgrade(milestone) {
+      if (game.phase !== 'playing') return;
+      if (game.upgradeMilestonesPlayed.includes(milestone)) return;
+      game.pendingLevelUpgrade = milestone;
+      game.upgradeMilestonesPlayed.push(milestone);
+      game.inlineUpgradeSpriteActive = true;
+      game.inlineUpgradeAwaitingTapSwap = true;
+      game.hitFlash = Math.max(game.hitFlash, 0.35);
+      game.floorPulse = 1;
+      game.shake = Math.max(game.shake, 4);
+      playUpgradeSound();
+    }
+
     function showGameOver() {
       game.phase = 'gameover';
+      game.inlineUpgradeSpriteActive = false;
+      game.inlineUpgradeAwaitingTapSwap = false;
       game.hitFlash = 0.95;
       game.shake = 7;
       saveBestIfNeeded();
@@ -473,9 +657,15 @@
 
     function showWin() {
       game.phase = 'win';
+      game.inlineUpgradeSpriteActive = false;
+      game.inlineUpgradeAwaitingTapSwap = false;
       game.hitFlash = 0.25;
       saveBestIfNeeded();
       stopFailMusic();
+      if (el.upgradeMusic) {
+        el.upgradeMusic.pause();
+        el.upgradeMusic.currentTime = 0;
+      }
       spawnConfetti();
       const lvl = getLevelForScore(Math.min(game.score, SCORE_CAP));
       el.winScore.textContent = String(Math.min(game.score, SCORE_CAP));
@@ -486,8 +676,22 @@
       el.winOverlay.setAttribute('aria-hidden', 'false');
     }
 
-    function onCrash() {
+    function onCrash(cause = 'obstacle') {
       if (game.phase !== 'playing') return;
+      if (cause === 'obstacle') {
+        game.phase = 'upgrading';
+        game.hitFlash = 1;
+        game.shake = 10;
+        game.collisionBlastQueued = true;
+        game.blastCenter = { x: game.player.x, y: game.player.y };
+        createPopcornBlast(game.player.x, game.player.y);
+        // Popcorn blast first, then show the regular fail/loser screen + fail music.
+        setTimeout(() => {
+          game.collisionBlastQueued = false;
+          showGameOver();
+        }, 520);
+        return;
+      }
       showGameOver();
     }
 
@@ -496,6 +700,10 @@
       game.score += 1;
       playScoreTick();
       updateHud();
+      const milestone = getMilestoneForScore(game.score);
+      if (milestone) {
+        triggerLevelUpgrade(milestone);
+      }
       if (game.score >= SCORE_CAP) {
         game.score = SCORE_CAP;
         updateHud();
@@ -528,6 +736,9 @@
         } else if (game.phase === 'win') {
           game.player.idlePhase += dt * 4.3;
           game.player.angle = Math.sin(game.worldTime * 3.4) * 0.05;
+        } else if (game.phase === 'upgrading') {
+          game.player.idlePhase += dt * 5.0;
+          game.player.angle = Math.sin(game.worldTime * 8.0) * 0.14;
         }
         game.player.flapPulse = Math.max(0, game.player.flapPulse - dt * 3.8);
         game.player.tapOsc = Math.max(0, game.player.tapOsc - dt * 4.2);
@@ -565,13 +776,13 @@
           game.player.vy = Math.max(40, game.player.vy * 0.2);
         } else {
           game.player.y = GROUND_Y - game.player.radius;
-          onCrash();
+          onCrash('ground');
           return;
         }
       }
 
       if (collisionWithPipes()) {
-        onCrash();
+        onCrash('obstacle');
       }
     }
 
@@ -734,23 +945,27 @@
 
     function drawPlayer() {
       const level = currentLevelConfig();
-      const img = app.images[level.sprite];
+      const visualSprite = (game.inlineUpgradeSpriteActive && UPGRADE_SEQUENCE.image) ? UPGRADE_SEQUENCE.image : level.sprite;
+      const img = app.images[visualSprite];
       const p = game.player;
       const idleBob = Math.sin(game.worldTime * 7.2 + p.idlePhase) * (game.phase === 'playing' ? 2.8 : 5.0);
       const tapWave = Math.sin(game.worldTime * 16) * p.tapOsc * 6;
       const hover = idleBob + tapWave;
-      const drawH = level.playerHeight + p.flapPulse * 5;
+      const drawH = (level.playerHeight + (game.inlineUpgradeSpriteActive ? 8 : 0)) + p.flapPulse * 5;
       const aspect = img ? (img.naturalWidth / img.naturalHeight) : 0.6;
       const drawW = drawH * aspect;
       p.radius = clamp(Math.min(drawW, drawH) * 0.17 + 8, 18, 29);
 
       const scaleX = 1 + Math.sin(game.worldTime * 18) * p.flapPulse * 0.025;
       const scaleY = 1 - Math.sin(game.worldTime * 18) * p.flapPulse * 0.03;
+      const blastScale = game.collisionBlastQueued ? Math.max(0.2, 1 - game.hitFlash * 0.75) : 1;
+      const blastAlpha = game.collisionBlastQueued ? Math.max(0, 1 - game.hitFlash * 0.95) : 1;
 
       ctx.save();
       ctx.translate(p.x, p.y + hover);
       ctx.rotate(p.angle);
-      ctx.scale(scaleX, scaleY);
+      ctx.scale(scaleX * blastScale, scaleY * blastScale);
+      ctx.globalAlpha = blastAlpha;
 
       ctx.save();
       ctx.globalAlpha = 0.22;
@@ -797,7 +1012,7 @@
       ctx.fillText(level.name, x + 12, y + 19);
       ctx.fillStyle = 'rgba(255,255,255,0.78)';
       ctx.font = '600 11px system-ui, sans-serif';
-      const minRange = level.maxScore === 5 ? 0 : (LEVELS[LEVELS.indexOf(level) - 1].maxScore + 1);
+      const minRange = level.maxScore === LEVELS[0].maxScore ? 0 : (LEVELS[LEVELS.indexOf(level) - 1].maxScore + 1);
       ctx.fillText(`Points ${minRange}-${level.maxScore}`, x + 12, y + 34);
       ctx.restore();
     }
@@ -866,10 +1081,19 @@
         restartGame();
       } else if (game.phase === 'win') {
         // Keep explicit buttons for win to avoid accidental restarts.
+      } else if (game.phase === 'upgrading') {
+        // Ignore taps during upgrade transition.
       }
     }
 
     function bindEvents() {
+      if (el.skipSplashBtn) {
+        el.skipSplashBtn.addEventListener('click', () => {
+          resumeAudioContext();
+          playLaunchSparkle();
+          showHomeAfterSplash();
+        });
+      }
       el.playBtn.addEventListener('click', () => {
         startGameFromHome();
       });
@@ -897,6 +1121,12 @@
       window.addEventListener('keydown', (evt) => {
         if (evt.code === 'Space' || evt.code === 'ArrowUp') {
           evt.preventDefault();
+          if (app.screen === 'splash') {
+            resumeAudioContext();
+            playLaunchSparkle();
+            showHomeAfterSplash();
+            return;
+          }
           if (app.screen === 'home') {
             if (app.assetsReady) startGameFromHome();
             return;
@@ -917,6 +1147,7 @@
       document.addEventListener('visibilitychange', () => {
         if (document.hidden) {
           el.failMusic.pause();
+          if (el.upgradeMusic) el.upgradeMusic.pause();
           if (app.screen === 'home') el.homeVideo.pause();
         } else if (app.screen === 'home') {
           playHomeVideo();
@@ -924,13 +1155,46 @@
       });
     }
 
+    function showHomeAfterSplash() {
+      if (app.bootStage !== 'splash') return;
+      app.bootStage = 'home';
+      if (app.splashTimer) {
+        clearTimeout(app.splashTimer);
+        app.splashTimer = null;
+      }
+      setScreen('home');
+      updateBestUI();
+      syncAudioButtons();
+      playHomeVideo();
+    }
+
+    function startSplashSequence() {
+      app.bootStage = 'splash';
+      setScreen('splash');
+      if (el.splashTitle && LAUNCH_SEQUENCE.title) el.splashTitle.textContent = LAUNCH_SEQUENCE.title;
+      if (el.splashSubtitle && LAUNCH_SEQUENCE.subtitle) el.splashSubtitle.textContent = LAUNCH_SEQUENCE.subtitle;
+      if (el.splashLogo && LAUNCH_SEQUENCE.logo) el.splashLogo.src = LAUNCH_SEQUENCE.logo;
+      if (el.splashLion && LAUNCH_SEQUENCE.lion) el.splashLion.src = LAUNCH_SEQUENCE.lion;
+      if (el.splashFounderName && LAUNCH_SEQUENCE.founderName) el.splashFounderName.textContent = LAUNCH_SEQUENCE.founderName;
+      if (el.splashFounderPhoto && LAUNCH_SEQUENCE.founderPhoto) el.splashFounderPhoto.src = LAUNCH_SEQUENCE.founderPhoto;
+
+      // Will play only if browser permits audio before interaction.
+      playLaunchSparkle();
+
+      if (app.splashTimer) clearTimeout(app.splashTimer);
+      app.splashTimer = setTimeout(() => {
+        showHomeAfterSplash();
+      }, LAUNCH_SEQUENCE.durationMs || 1000);
+    }
+
     function init() {
       bindEvents();
       syncAudioButtons();
+      applyStaticUiFromConfig();
       updateBestUI();
       updateHud();
       setTapPrompt(true);
-      goHome();
+      startSplashSequence();
 
       if (el.assetStatus) el.assetStatus.textContent = 'Loading player sprites and obstacle asset...';
       preloadImages()
@@ -938,7 +1202,7 @@
           app.assetsReady = true;
           el.playBtn.disabled = false;
           el.playBtn.textContent = 'Play';
-          if (el.assetStatus) el.assetStatus.textContent = 'Assets ready. 4 levels active (0-5, 6-10, 11-15, 16-20).';
+          if (el.assetStatus) el.assetStatus.textContent = 'Assets ready. 4 tiers active (0-10, 11-20, 21-30, 31-40).';
         })
         .catch((err) => {
           console.error(err);
@@ -951,7 +1215,7 @@
         app.raf = requestAnimationFrame(frame);
       }
 
-      playHomeVideo();
+      // Home video starts after splash ends.
     }
 
     init();
